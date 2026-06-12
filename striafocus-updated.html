@@ -1,0 +1,2165 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StriaFocus - Premium AI Student Workspace</title>
+    <link rel="stylesheet" href="premium-ui.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#0ea5a4',
+                            600: '#0891b2',
+                            700: '#0e7490',
+                            900: '#075985',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <script>
+        // --- Engine resizer and layout controls ---
+        (function(){
+            const side = () => document.getElementById('engine-side');
+            const resizer = () => document.getElementById('engine-resizer');
+            const iframe = () => document.getElementById('engine-iframe');
+            const btn = () => document.getElementById('btn-open-engine');
+
+            function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+            function initResizer(){
+                const r = resizer();
+                if(!r) return;
+                let dragging = false;
+                let startX = 0;
+                let startWidth = 0;
+                let originalTransition = '';
+
+                const clampWidth = width => {
+                    const winW = window.innerWidth;
+                    return clamp(width, 320, Math.min(Math.floor(winW * 0.9), 1040));
+                };
+
+                const beginDrag = e => {
+                    // Stop iframe drag metrics from stealing focus/jitter during fast pointer moves.
+                    dragging = true;
+                    startX = e.clientX;
+                    const s = side();
+                    if(!s) return;
+                    startWidth = parseInt(window.getComputedStyle(s).width, 10) || 0;
+                    originalTransition = s.style.transition || '';
+                    s.style.transition = 'none';
+
+                    const app = document.getElementById('app-interface');
+                    if(app) app.style.transition = 'none';
+
+                    const ifr = iframe();
+                    if(ifr) ifr.style.pointerEvents = 'none';
+
+                    document.body.style.userSelect = 'none';
+                    document.body.style.cursor = 'ew-resize';
+                    window.addEventListener('pointermove', onMove, { passive: true });
+                    window.addEventListener('pointerup', endDrag, { passive: true });
+                    window.addEventListener('pointercancel', endDrag, { passive: true });
+                    r.setPointerCapture?.(e.pointerId);
+                };
+
+                const onMove = e => {
+                    if(!dragging) return;
+
+                    // Mobile: the side panel becomes full-width (min-width:100%).
+                    // Pixel-based snapping fights the layout and pushes content off-screen.
+                    if(window.innerWidth <= 900){
+                        // Keep drag state but don't override width.
+                        return;
+                    }
+
+                    const delta = e.clientX - startX;
+                    const newWidth = clampWidth(startWidth - delta);
+                    const s = side();
+                    if(!s) return;
+                    s.style.width = newWidth + 'px';
+                    s.classList.add('open');
+                    s.setAttribute('aria-hidden','false');
+                    const app = document.getElementById('app-interface');
+                    if(app) app.style.marginRight = s.style.width;
+                    updateTimeScaleIfNeeded();
+                };
+
+                const endDrag = () => {
+                    if(!dragging) return;
+                    dragging = false;
+                    document.body.style.userSelect = '';
+                    document.body.style.cursor = '';
+
+                    // Restore iframe interactivity after resize completes.
+                    const ifr = iframe();
+                    if(ifr) ifr.style.pointerEvents = 'auto';
+
+                    const s = side();
+                    if(s){
+                        s.style.transition = originalTransition || '';
+                        localStorage.setItem('sf_engine_width', s.style.width || '');
+                    }
+                    const app = document.getElementById('app-interface');
+                    if(app) app.style.transition = 'margin-right .36s cubic-bezier(.2,.9,.2,1)';
+                    window.removeEventListener('pointermove', onMove);
+                    window.removeEventListener('pointerup', endDrag);
+                    window.removeEventListener('pointercancel', endDrag);
+                };
+
+                r.addEventListener('pointerdown', beginDrag);
+            }
+
+            function openSideWithStoredWidth(){ const s = side(); const w = localStorage.getItem('sf_engine_width'); if(s){ if(w){ s.style.width = w; } else { s.style.width = Math.min(window.innerWidth * 0.9, 1040) + 'px'; } s.classList.add('open'); s.setAttribute('aria-hidden','false'); const app = document.getElementById('app-interface'); if(app) { const applied = s.style.width || window.getComputedStyle(s).width; app.style.marginRight = applied; app.style.transition = 'margin-right .36s cubic-bezier(.2,.9,.2,1)'; } } }
+
+            // layout modes
+            function setActiveLayoutButton(activeId){
+                document.querySelectorAll('#layout-controls button').forEach(btn => {
+                    btn.classList.toggle('active', btn.id === activeId);
+                });
+                // also sync overlay buttons (when present)
+                const map = { 'layout-full': 'overlay-all', 'layout-time': 'overlay-time', 'layout-custom': 'overlay-custom' };
+                const activeOverlay = map[activeId];
+                document.querySelectorAll('#time-overlay-controls button').forEach(b => {
+                    b.classList.toggle('active', b.id === activeOverlay);
+                });
+            }
+            window.setLayout = function(mode){
+                document.body.classList.remove('layout-time-only');
+                document.body.classList.remove('layout-custom');
+                if(mode==='full'){
+                    document.querySelectorAll('#timer-panel-wrapper, #timetable-panel, #session-engine-panel, #assignments-panel').forEach(el=>el && el.classList.remove('hidden'));
+                    const timerPanel = document.getElementById('timer-panel-wrapper');
+                    if(timerPanel) {
+                        timerPanel.classList.remove('hidden');
+                        timerPanel.style.display = 'flex';
+                    }
+                    const audioBlock = document.querySelector('#timer-panel-wrapper .border-t'); if(audioBlock) audioBlock.classList.remove('hidden');
+                    document.body.classList.remove('layout-time-only');
+                    document.body.classList.remove('layout-custom');
+                    setActiveLayoutButton('layout-full');
+                    updateTimeScaleIfNeeded();
+                } else if(mode==='time-only'){
+                    document.body.classList.remove('layout-custom');
+                    document.body.classList.add('layout-time-only');
+                    document.querySelectorAll('#timer-panel-wrapper, #timetable-panel, #session-engine-panel, #assignments-panel').forEach(el=>el && el.classList.toggle('hidden', el.id !== 'timer-panel-wrapper'));
+                    const timerPanel = document.getElementById('timer-panel-wrapper');
+                    if(timerPanel) {
+                        timerPanel.classList.remove('hidden');
+                        timerPanel.style.display = 'flex';
+                    }
+                    setActiveLayoutButton('layout-time');
+                    updateTimeScaleIfNeeded();
+                }
+            };
+
+            window.openLayoutCustom = function(){ const m = document.getElementById('layout-custom-modal'); if(!m) return;
+                document.body.classList.remove('layout-time-only');
+                document.body.classList.add('layout-custom');
+                document.getElementById('hide-timetable').checked = !!document.getElementById('timetable-panel')?.classList.contains('hidden');
+                document.getElementById('hide-session-engine').checked = !!document.getElementById('session-engine-panel')?.classList.contains('hidden');
+                document.getElementById('hide-assignments').checked = !!document.getElementById('assignments-panel')?.classList.contains('hidden');
+                document.getElementById('hide-audio').checked = !!document.querySelector('#timer-panel-wrapper .border-t')?.classList.contains('hidden');
+                m.style.display='flex'; m.classList.remove('hidden');
+                setActiveLayoutButton('layout-custom');
+            };
+            window.closeLayoutCustom = function(){ const m = document.getElementById('layout-custom-modal'); if(!m) return; m.style.display='none'; m.classList.add('hidden'); };
+
+            window.applyLayoutCustom = function(){ const hideTimetable = document.getElementById('hide-timetable').checked; const hideSession = document.getElementById('hide-session-engine').checked; const hideAssignments = document.getElementById('hide-assignments').checked; const hideAudio = document.getElementById('hide-audio').checked;
+                document.getElementById('timetable-panel')?.classList.toggle('hidden', hideTimetable);
+                document.getElementById('session-engine-panel')?.classList.toggle('hidden', hideSession);
+                document.getElementById('assignments-panel')?.classList.toggle('hidden', hideAssignments);
+                const timerPanel = document.getElementById('timer-panel-wrapper');
+                if(timerPanel) {
+                    timerPanel.classList.remove('hidden');
+                    timerPanel.style.display = 'flex';
+                }
+                // simple audio hide: hide audio block inside timer wrapper
+                const audioBlock = document.querySelector('#timer-panel-wrapper .border-t'); if(audioBlock) audioBlock.classList.toggle('hidden', hideAudio);
+                document.body.classList.remove('layout-time-only');
+                document.body.classList.add('layout-custom');
+                setActiveLayoutButton('layout-custom');
+                closeLayoutCustom();
+            };
+
+            function updateTimeScaleIfNeeded(){ if(!document.body.classList.contains('layout-time-only')) return; const s = side(); const sideW = s ? parseInt((s.style.width || window.getComputedStyle(s).width).replace('px','')) || 0 : 0; const avail = Math.max(320, window.innerWidth - sideW - 80); const base = 720; const scale = Math.min(1, avail / base); const tc = document.getElementById('timer-card'); if(tc){ tc.style.transform = `scale(${scale})`; }}
+
+            // adjust scale on window resize
+            window.addEventListener('resize', () => { updateTimeScaleIfNeeded(); });
+
+            // hook into existing open/close to ensure behavior
+            const originalOpen = window.openEngineModal;
+            window.openEngineModal = function(){ originalOpen && originalOpen(); setTimeout(openSideWithStoredWidth, 40); setTimeout(()=>{ updateTimeScaleIfNeeded(); }, 160); };
+
+            const originalClose = window.closeEngineModal;
+            window.closeEngineModal = function(){ originalClose && originalClose(); setTimeout(()=>{ updateTimeScaleIfNeeded(); }, 160); };
+
+            function updateTimeDisplay(){}
+
+            document.addEventListener('DOMContentLoaded', ()=>{ initResizer(); // restore any layout preference
+                const w = localStorage.getItem('sf_engine_width'); if(w){ const s = document.getElementById('engine-side'); if(s) s.style.width = w; }
+                if(typeof window.setLayout === 'function') window.setLayout('full');
+                restoreSavedSession();
+            });
+        })();
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { transition: background-color 0.2s ease, border-color 0.2s ease; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #0ea5a4; border-radius: 4px; }
+
+
+        /* Auth card polished styles */
+        #auth-wall .auth-card { position: relative; overflow: hidden; }
+        .auth-visual { position: absolute; right: -40px; top: -40px; width: 220px; height: 220px; background: radial-gradient(circle at 30% 30%, rgba(139,92,246,0.14), transparent 30%), radial-gradient(circle at 70% 70%, rgba(99,102,241,0.08), transparent 30%); transform: rotate(15deg); border-radius: 28px; pointer-events: none; animation: floatSmall 8s ease-in-out infinite; }
+        .input-with-icon { position: relative; }
+        .input-with-icon input { padding-right: 44px; }
+        .input-icon-btn { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: transparent; border: none; color: inherit; padding: 6px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; }
+        .input-icon-btn:hover { color: #8b5cf6; }
+        .input-icon-btn:active { transform: translateY(-50%) scale(0.98); }
+
+        /* Account modal */
+        #account-modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 60; }
+        #account-modal .panel { width: 100%; max-width: 420px; padding: 18px; border-radius: 18px; }
+
+        /* Premium auth wall */
+        #auth-wall {
+            background: linear-gradient(135deg, rgba(10,10,15,0.95), rgba(20,20,30,0.95));
+        }
+
+        html:not(.dark) #auth-wall {
+            background: linear-gradient(135deg, rgba(248,250,252,0.95), rgba(241,245,249,0.95));
+        }
+
+        #auth-wall .auth-card {
+            background: rgba(18, 18, 29, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            box-shadow: 0 20px 60px rgba(139, 92, 246, 0.15);
+            animation: slideInUp 0.6s ease-out;
+        }
+
+        html:not(.dark) #auth-wall .auth-card {
+            background: rgba(255, 255, 255, 0.8);
+            box-shadow: 0 20px 60px rgba(139, 92, 246, 0.1);
+        }
+
+        @keyframes slideInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes floatSmall {
+            0%, 100% { transform: translateY(0px) rotate(15deg); }
+            50% { transform: translateY(20px) rotate(15deg); }
+        }
+
+        /* Premium button enhancements */
+        #btn-auth-submit {
+            background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #btn-auth-submit:before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.2);
+            transition: left 0.4s ease;
+        }
+
+        #btn-auth-submit:hover {
+            box-shadow: 0 15px 40px rgba(139, 92, 246, 0.4);
+            transform: translateY(-2px);
+        }
+
+        #btn-auth-submit:hover:before {
+            left: 100%;
+        }
+
+        .preset-card {
+            position: relative;
+        }
+
+        .preset-button {
+            width: 100%;
+            text-align: left;
+            transition: all 0.3s ease;
+        }
+
+        .preset-button.active-preset {
+            border-color: rgba(16, 185, 129, 0.8) !important;
+            background: rgba(16, 185, 129, 0.12) !important;
+            box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.15);
+        }
+
+        .preset-delete {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 34px;
+            height: 34px;
+            border-radius: 12px;
+            background: rgba(15, 15, 25, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        html:not(.dark) .preset-delete {
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            color: #1e293b;
+        }
+
+        .preset-delete:hover {
+            background: rgba(239, 68, 68, 0.95);
+            border-color: rgba(239, 68, 68, 0.4);
+            transform: scale(1.05);
+        }
+
+        /* Datepicker styles */
+        .datepicker { min-width: 260px; }
+        .datepicker .dp-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+        .datepicker .dp-month { font-weight:700; }
+        .datepicker .dp-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:6px; }
+        .datepicker .dp-day { width:34px; height:34px; display:flex; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; }
+        .datepicker .dp-day:hover { background: rgba(14,165,164,0.06); }
+        .datepicker .dp-day.disabled { opacity:0.28; cursor: default; }
+        .datepicker .dp-controls button { background: transparent; border: none; cursor: pointer; padding:6px; border-radius:6px; }
+        .datepicker.dark { background: #0f1724; border: 1px solid rgba(255,255,255,0.04); }
+
+        /* Engine side-panel + button */
+        .engine-launch-btn-wrap { position: relative; display: inline-flex; }
+        .engine-launch-btn-wrap .tooltip { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%) translateY(4px); opacity: 0; pointer-events: none; background: rgba(15,23,42,0.92); color: #fff; padding: 8px 12px; border-radius: 999px; font-size: 12px; white-space: nowrap; transition: opacity .18s ease, transform .18s ease; z-index: 10; }
+        .engine-launch-btn-wrap:hover .tooltip { opacity: 1; transform: translateX(-50%) translateY(0); }
+        .engine-launch-btn { min-width: 220px; padding: 1rem 1.5rem; border-radius: 24px; font-size: 1rem; font-weight: 800; background: linear-gradient(135deg, #8b5cf6, #0ea5a4); color: #fff; box-shadow: 0 18px 42px rgba(99,102,241,0.22); transition: transform .22s ease, box-shadow .22s ease, width .28s ease, padding .22s ease, border-radius .22s ease; display: inline-flex; align-items:center; justify-content:center; gap:8px; }
+        .engine-launch-btn:hover { transform: translateY(-2px); box-shadow: 0 22px 52px rgba(99,102,241,0.28); }
+        .engine-launch-btn.small { min-width: 48px; width:48px; padding: 0.5rem; border-radius: 12px; font-size: 0.92rem; gap:0; }
+
+        /* Side panel container */
+        #engine-side { position: fixed; right: 0; top: 64px; bottom: 0; width: 0; max-width: 90vw; min-width: 320px; box-shadow: -20px 0 60px rgba(2,6,23,0.45); overflow: hidden; z-index: 80; transition: width .28s cubic-bezier(.2,.9,.2,1), transform .28s cubic-bezier(.2,.9,.2,1); transform: translateX(100%); }
+        @media (max-width: 900px) { #engine-side { top: 0; max-width: 100%; min-width: 100%; } }
+        #engine-side.open { width: min(90vw, 1040px); transform: translateX(0); }
+        .engine-side-panel { width:100%; height:100%; background: #fff; display: grid; grid-template-rows: auto 1fr; position: relative; }
+        .dark .engine-side-panel { background: #071125; color: #e2e8f0; }
+        .engine-side-header { padding: 18px 18px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(15,23,42,0.08); }
+        .engine-side-header h3{ margin:0; font-weight:800; font-size:1.05rem }
+        .engine-side-header p{ margin:0; font-size:13px; color:#64748b }
+        .engine-side-close { background:transparent; border:none; padding:10px; border-radius:12px; cursor:pointer; transition: background .2s ease; }
+        .engine-side-close:hover { background: rgba(15,23,42,0.06); }
+        .engine-side-body { height:100%; }
+        #engine-iframe { width:100%; height:100%; border:0; background:#fff; }
+    </style>
+    <style>
+        /* Quick-add (premium) */
+        #quick-add { transition: all 240ms cubic-bezier(.2,.9,.2,1); }
+        #quick-add .quick-panel { min-width: 520px; border-radius: 14px; padding: 16px; box-shadow: 0 24px 80px rgba(2,6,23,0.6); backdrop-filter: blur(8px); background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.04); }
+        #quick-add .quick-input { width: 100%; padding: 12px 14px; border-radius: 10px; font-size:16px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); color: inherit; }
+        #quick-add .quick-hint { font-size:12px; color: rgba(203,213,225,0.8); }
+        #quick-add.show { opacity:1; transform: translateY(0); }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 min-h-screen font-sans antialiased">
+
+    <!-- Time-only overlay controls (shown when layout-time-only is active) -->
+    <div id="time-overlay-controls" class="hidden" aria-hidden="true">
+        <div class="time-overlay-inner">
+            <button id="overlay-all" onclick="setLayout('full')" title="Show all">All</button>
+            <button id="overlay-time" onclick="setLayout('time-only')" title="Time">Time</button>
+            <button id="overlay-custom" onclick="openLayoutCustom()" title="Custom">Custom</button>
+        </div>
+    </div>
+
+    <style>
+        /* Resizer bar for engine side */
+        .engine-resizer { position: absolute; left: -10px; top: 0; bottom: 0; width: 24px; cursor: col-resize; z-index: 90; touch-action: none; display: flex; align-items: center; justify-content: center; }
+        .engine-resizer:hover, .engine-resizer:active { background: rgba(99,102,241,0.08); }
+        .engine-resizer:before { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) rotate(90deg); width: 3px; height: 60px; background: rgba(99,102,241,0.25); border-radius: 999px; }
+        .engine-resizer:after { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 8px; height: 8px; background: rgba(99,102,241,0.35); border-radius: 999px; }
+
+        /* Layout controls styling */
+        :root { --sf-accent: #8b5cf6; }
+        #layout-controls { margin: 1rem auto 0; width: min(100%, 420px); }
+        #layout-controls button { transition: transform .18s ease, background .18s ease, color .18s ease, box-shadow .18s ease; padding: 0.55rem 0.85rem !important; border-radius: 999px; border: none; min-width: 56px; letter-spacing: 0.02em; font-size: 10px; font-weight: 700; text-transform: uppercase; background: rgba(var(--sf-accent-rgb), 0.08); color: #0f172a; box-shadow: 0 0 0 0 transparent; }
+        #layout-controls button:hover { background: rgba(var(--sf-accent-rgb), 0.14); box-shadow: 0 0 0 0 transparent; }
+        #layout-controls button.active { background: var(--sf-accent); color: #fff; box-shadow: 0 14px 30px rgba(15,23,42,0.12); }
+        #layout-controls button:active { transform: translateY(1px) scale(.98); }
+        body.layout-time-only #engine-launch-panel,
+        body.layout-time-only #quote-panel,
+        body.layout-time-only #timetable-panel,
+        body.layout-time-only #session-engine-panel,
+        body.layout-time-only #assignments-panel { display: none !important; }
+        body.layout-time-only main { display: flex !important; align-items: center !important; justify-content: center !important; min-height: calc(100vh - 64px) !important; background: transparent !important; padding: 0 !important; width: 100% !important; max-width: 100vw !important; overflow: hidden !important; }
+        body.layout-time-only #timer-panel-wrapper { position: fixed !important; top: 64px !important; left: 50% !important; transform: translateX(-50%) !important; width: 100vw !important; max-width: 100vw !important; height: calc(100vh - 64px) !important; display: flex !important; align-items: center !important; justify-content: center !important; padding: 0 !important; border: none !important; box-shadow: none !important; background: transparent !important; margin: 0 !important; overflow: hidden !important; }
+        body.layout-time-only #timer-card { padding: 0 !important; width: 100% !important; height: 100% !important; display: flex !important; align-items: center !important; justify-content: center !important; }
+        body.layout-time-only #time-countdown { font-size: 20vw !important; width: auto !important; text-align: center !important; line-height: 1 !important; white-space: nowrap !important; }
+        body.layout-time-only #timer-state-badge,
+        body.layout-time-only #layout-controls,
+        body.layout-time-only .border-t { display: none !important; }
+        /* overlay controls shown in time-only */
+        #time-overlay-controls { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 120; }
+        body.layout-time-only #time-overlay-controls { display: block; }
+        .time-overlay-inner { display: inline-flex; gap: 8px; background: rgba(15,23,42,0.6); padding: 6px; border-radius: 999px; backdrop-filter: blur(6px); }
+        .time-overlay-inner button { min-width: 64px; padding: 8px 12px; border-radius: 999px; border: none; background: transparent; color: #e6eef8; font-weight: 700; cursor: pointer; }
+        .time-overlay-inner button:hover { background: rgba(255,255,255,0.06); }
+        .time-overlay-inner button.active { background: var(--sf-accent); color: white; box-shadow: 0 8px 30px rgba(99,102,241,0.18); }
+        body.layout-custom .grid { grid-template-columns: 1fr !important; justify-items: center; gap: 1.5rem; }
+        body.layout-custom .grid > * { max-width: 980px; width: 100%; }
+        body.layout-custom #timer-panel-wrapper { order: -1; box-shadow: 0 40px 90px rgba(var(--sf-accent-rgb), 0.12); border-color: rgba(var(--sf-accent-rgb), 0.18); transform: scale(1.02); }
+        body.layout-custom #timer-panel-wrapper .text-center { padding: 0 1rem; }
+        body.layout-custom #layout-controls { width: min(100%, 520px); }
+    </style>
+
+    <div id="auth-wall" class="fixed inset-0 bg-slate-100 dark:bg-slate-950 z-50 flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 w-full max-w-md p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl space-y-6 auth-card relative">
+            <div class="auth-visual" aria-hidden="true"></div>
+            <div class="text-center space-y-2">
+                <div class="mx-auto flex justify-center">
+                    <svg width="64" height="64" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="logo-grad-auth" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stop-color="#8b5cf6"/>
+                                <stop offset="100%" stop-color="#0ea5a4"/>
+                            </linearGradient>
+                        </defs>
+                        <rect width="64" height="64" rx="18" fill="url(#logo-grad-auth)"/>
+                        <line x1="13" y1="32" x2="46" y2="32" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+                        <line x1="13" y1="22" x2="34" y2="22" stroke="rgba(255,255,255,0.55)" stroke-width="2.5" stroke-linecap="round"/>
+                        <line x1="13" y1="42" x2="40" y2="42" stroke="rgba(255,255,255,0.55)" stroke-width="2.5" stroke-linecap="round"/>
+                        <circle cx="46" cy="32" r="7" fill="none" stroke="#fff" stroke-width="2.5"/>
+                        <line x1="51" y1="37" x2="57" y2="43" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <h1 id="auth-title-modifier" class="text-2xl font-black tracking-tight bg-gradient-to-r from-brand-500 to-violet-400 bg-clip-text text-transparent">STRIAFOCUS</h1>
+                <p class="text-xs text-slate-400" id="auth-subtitle">Sign in to sync your custom environment parameters.</p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Username ID</label>
+                    <div class="input-with-icon">
+                        <input type="text" id="auth-username" placeholder="Enter workspace alias..." class="w-full bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Email (optional)</label>
+                    <div class="input-with-icon">
+                        <input type="email" id="auth-email" placeholder="you@school.edu" class="w-full bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Security Key</label>
+                    <div class="input-with-icon">
+                        <input type="password" id="auth-password" placeholder="••••••••" class="w-full bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                        <button id="auth-pass-toggle" type="button" class="input-icon-btn" onclick="togglePasswordVisibility('auth-password','auth-pass-toggle')" title="Show password"><i class="fa-solid fa-eye"></i></button>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 mb-4">
+                    <label class="inline-flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="auth-remember" class="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-brand-600 focus:ring-brand-500" />
+                        Keep me signed in
+                    </label>
+                </div>
+                <button onclick="handleAuthSubmit()" id="btn-auth-submit" class="w-full py-3 bg-gradient-to-r from-brand-500 to-violet-400 hover:opacity-95 text-white font-bold rounded-2xl shadow-xl shadow-brand-600/20 text-sm transition transform duration-200 hover:-translate-y-0.5">
+                    Access System
+                </button>
+            </div>
+
+            <div class="text-center">
+                <button onclick="toggleAuthMode()" id="btn-auth-toggle" class="text-xs text-brand-500 hover:underline font-medium">
+                    Need a secure local account? Create Profile
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="app-interface" class="hidden">
+        <header class="border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/50 backdrop-blur sticky top-0 z-40">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="logo-grad-nav" x1="0" y1="0" x2="1" y2="1">
+                                <stop offset="0%" stop-color="#8b5cf6"/>
+                                <stop offset="100%" stop-color="#0ea5a4"/>
+                            </linearGradient>
+                        </defs>
+                        <rect width="32" height="32" rx="8" fill="url(#logo-grad-nav)"/>
+                        <line x1="6" y1="16" x2="23" y2="16" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+                        <line x1="6" y1="11" x2="16" y2="11" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round"/>
+                        <line x1="6" y1="21" x2="19" y2="21" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round"/>
+                        <circle cx="23" cy="16" r="4" fill="none" stroke="#fff" stroke-width="1.8"/>
+                        <line x1="25.8" y1="18.8" x2="28.5" y2="21.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span class="text-xl font-bold tracking-tight bg-gradient-to-r from-brand-500 to-violet-400 bg-clip-text text-transparent">STRIAFOCUS</span>
+                </div>
+                
+                <div class="flex items-center gap-4 bg-slate-100 dark:bg-slate-900 px-4 py-1.5 rounded-full border border-slate-200 dark:border-slate-800">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-brand-500">Rank</span>
+                        <span id="rank-level" class="font-black text-sm">Lv. 1 Scholar</span>
+                    </div>
+                    <div class="flex items-center gap-2 ml-3">
+                        <span id="streak-badge" class="flex items-center gap-2 text-xs font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300 px-2 py-1 rounded-full">
+                            <i class="fa-solid fa-fire text-sm text-amber-500"></i>
+                            <span id="streak-count">0</span>d
+                        </span>
+                    </div>
+                    <div class="w-32 bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+                        <div id="exp-bar" class="bg-brand-600 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <span id="exp-text" class="text-xs text-slate-500 font-mono">0/100 XP</span>
+                </div>
+
+                <div class="flex items-center gap-3">
+                    <button onclick="toggleTheme()" class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 hover:scale-105 active:scale-95 transition border border-slate-200 dark:border-slate-800">
+                        <i id="theme-icon" class="fa-solid fa-moon text-slate-600 dark:text-slate-400"></i>
+                    </button>
+                    <input type="color" id="accentColor" onchange="changeAccent(this.value)" value="#8b5cf6" class="w-8 h-8 rounded-lg cursor-pointer border-0 bg-transparent">
+                    <button id="btn-account" onclick="showAccountModal()" class="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 hover:scale-105 active:scale-95 transition border border-slate-200 dark:border-slate-800" title="Account">
+                        <i id="account-icon" class="fa-solid fa-user text-slate-600 dark:text-slate-400"></i>
+                    </button>
+                    <button onclick="logout()" class="p-2.5 rounded-xl bg-red-500/10 text-red-500 hover:bg-red-500/20 text-xs font-bold flex items-center gap-1">
+                        <i class="fa-solid fa-power-off"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+            <div id="engine-launch-panel" class="bg-gradient-to-r from-sky-500/10 via-violet-100/80 to-emerald-500/10 dark:from-slate-900 dark:via-slate-950 dark:to-slate-900 p-6 rounded-[28px] border border-slate-200 dark:border-slate-800 shadow-xl">
+                <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+                    <div class="max-w-2xl">
+                        <p class="text-xs font-semibold uppercase tracking-[0.32em] text-brand-500">StriaFocus Engine</p>
+                        <h2 class="mt-2 text-2xl md:text-3xl font-extrabold text-slate-900 dark:text-white">Launch the AI Study Engine</h2>
+                        <p class="mt-3 text-sm text-slate-600 dark:text-slate-400">Open your AI study companion right inside the dashboard. Hover the big button to see what it does.</p>
+                    </div>
+                    <div class="engine-launch-btn-wrap">
+                        <button id="btn-open-engine" onclick="openEngineModal()" title="Open the StriaFocus AI engine inside this dashboard" class="engine-launch-btn inline-flex items-center justify-center gap-2">
+                            <span>Open Engine</span>
+                            <i class="fa-solid fa-rocket"></i>
+                        </button>
+                        <span class="tooltip">Launch StriaFocus AI Study Engine in-page</span>
+                    </div>
+                </div>
+            </div>
+            <div id="time-only-action" class="hidden fixed inset-0 w-screen h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center" style="top: 64px; height: calc(100vh - 64px);"></div>
+            <div id="quote-panel" class="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <h3 id="quote-text" class="text-lg md:text-xl font-semibold">"Do the best you can until you know better. Then when you know better, do better."</h3>
+                        <p id="quote-author" class="text-xs text-slate-500 mt-1">— Maya Angelou</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <!-- edit removed per request -->
+                        <button id="btn-open-quests" onclick="openQuestModal()" class="p-3 rounded-full bg-gradient-to-br from-amber-400 to-rose-500 text-white shadow-xl hover:scale-105 transition" title="Quests">
+                            <i class="fa-solid fa-scroll"></i>
+                        </button>
+                    </div>
+                </div>
+                <!-- quote editing removed; fixed premium quote shown -->
+            </div>
+            
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                
+                <div id="timetable-panel" class="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-lg font-bold">Custom Timetable</h2>
+                            <p class="text-xs text-slate-500">Design your actual day and class rigor tags.</p>
+                        </div>
+                        <button onclick="openTimetableModal()" class="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-md shadow-brand-600/20">
+                            <i class="fa-solid fa-plus"></i> Add Class
+                        </button>
+                    </div>
+
+                    <div class="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-slate-50 dark:bg-slate-950/50 text-xs font-bold text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                                    <th class="p-3">Time</th>
+                                    <th class="p-3">Subject</th>
+                                    <th class="p-3">Level</th>
+                                    <th class="p-3 text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="timetable-rows" class="text-sm divide-y divide-slate-100 dark:divide-slate-800/50">
+                                </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="session-engine-panel" class="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
+                    <div>
+                        <h2 class="text-lg font-bold">Session Engine</h2>
+                        <p class="text-xs text-slate-500">Pick template or instantiate a custom workspace.</p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2" id="preset-container">
+                        <div class="preset-card">
+                            <button onclick="setPreset(25, 'default-pomodoro')" data-preset-key="default-pomodoro" class="preset-button p-3 rounded-xl border border-brand-500/30 bg-brand-500/5 dark:bg-brand-500/10 text-left hover:border-brand-500 transition">
+                                <div class="text-xs font-bold text-brand-500">🍅 Pomodoro</div>
+                                <div class="text-lg font-mono font-bold mt-1">25:00</div>
+                            </button>
+                        </div>
+                        <div class="preset-card">
+                            <button onclick="setPreset(60, 'default-math')" data-preset-key="default-math" class="preset-button p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-left hover:border-brand-500 transition">
+                                <div class="text-xs font-bold text-slate-400">📐 Math Grind</div>
+                                <div class="text-lg font-mono font-bold mt-1">60:00</div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button onclick="openCustomSessionModal()" class="w-full py-2 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl hover:border-brand-500 text-xs font-medium text-slate-500 hover:text-brand-500 transition flex items-center justify-center gap-1.5">
+                        <i class="fa-solid fa-plus"></i> Add Custom Session Preset
+                    </button>
+
+                    <div class="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm font-medium">Target Allocation</span>
+                            <div class="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
+                                <button onclick="adjustTime(-5)" class="w-7 h-7 text-xs flex items-center justify-center rounded bg-white dark:bg-slate-900 shadow-sm hover:bg-slate-50"><i class="fa-solid fa-chevron-down"></i></button>
+                                <span id="display-target-time" class="w-14 text-center font-mono font-bold text-sm">30m</span>
+                                <button onclick="adjustTime(5)" class="w-7 h-7 text-xs flex items-center justify-center rounded bg-white dark:bg-slate-900 shadow-sm hover:bg-slate-50"><i class="fa-solid fa-chevron-up"></i></button>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm font-medium">Desired Breaks</span>
+                            <div class="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-slate-800">
+                                <button onclick="adjustBreaks(-1)" class="w-7 h-7 text-xs flex items-center justify-center rounded bg-white dark:bg-slate-900 shadow-sm hover:bg-slate-50"><i class="fa-solid fa-minus"></i></button>
+                                <span id="display-breaks-count" class="w-14 text-center font-mono font-bold text-sm">1</span>
+                                <button onclick="adjustBreaks(1)" class="w-7 h-7 text-xs flex items-center justify-center rounded bg-white dark:bg-slate-900 shadow-sm hover:bg-slate-50"><i class="fa-solid fa-plus"></i></button>
+                            </div>
+                        </div>
+
+                        <div class="p-3 bg-slate-50 dark:bg-slate-950 rounded-xl text-xs space-y-1 font-mono text-slate-500 border border-slate-100 dark:border-slate-900">
+                            <div class="flex justify-between"><span>Focus Block:</span><span id="calc-focus-block" class="text-slate-900 dark:text-slate-300 font-bold">15 mins</span></div>
+                            <div class="flex justify-between"><span>Break Blocks:</span><span id="calc-break-block" class="text-slate-900 dark:text-slate-300 font-bold">1 x 5 mins</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                
+                <div id="timer-panel-wrapper" class="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-6 relative overflow-hidden">
+                    <div id="timer-card" class="flex flex-col items-center justify-center pt-4">
+                        <div id="timer-state-badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-widest uppercase bg-brand-500/10 text-brand-500 border border-brand-500/20 mb-3">
+                            Operational Focus
+                        </div>
+                        <div class="text-center">
+                            <div id="time-countdown" class="text-6xl font-black font-mono tracking-tight text-slate-900 dark:text-white">30:00</div>
+                        </div>
+                        <div id="layout-controls" class="mt-6 grid grid-cols-3 gap-2 justify-center w-full max-w-xs mx-auto">
+                            <button id="layout-full" onclick="setLayout('full')" title="Show everything" class="active px-3 py-2 rounded-full text-[11px] font-semibold">All</button>
+                            <button id="layout-time" onclick="setLayout('time-only')" title="Show only the centered time" class="px-3 py-2 rounded-full text-[11px] font-semibold">Time</button>
+                            <button id="layout-custom" onclick="openLayoutCustom()" title="Customize visible panels" class="px-3 py-2 rounded-full text-[11px] font-semibold">Custom</button>
+                        </div>
+                        <div class="flex items-center gap-3 w-full max-w-xs mt-4">
+                            <button onclick="toggleTimer()" id="btn-timer-trigger" class="flex-1 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-bold shadow-lg shadow-brand-600/20 active:scale-95 transition text-sm">
+                                <i class="fa-solid fa-play mr-1.5"></i> Start
+                            </button>
+                            <button onclick="resetTimer()" class="p-2.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl transition">
+                                <i class="fa-solid fa-rotate-left"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-3">
+                        <div class="flex items-center justify-between gap-3">
+                            <h4 class="text-xs font-bold tracking-wider text-slate-400 uppercase"><i class="fa-solid fa-sliders mr-1"></i> Bio-Acoustic Mix</h4>
+                            <button id="btn-audio-unlock" onclick="AudioEngine.unlockAudio()" class="text-[11px] px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-slate-100 transition">
+                                Enable Audio
+                            </button>
+                        </div>
+                        <div id="audio-status" class="text-[11px] text-slate-400">Click enable audio before adjusting sliders.</div>
+                        <div class="space-y-2 text-xs">
+                            <div class="flex items-center justify-between gap-4">
+                                <span class="w-20 font-medium">🌧️ Rain</span>
+                                <input type="range" min="0" max="100" value="0" oninput="updateAudioChannel('rain', this.value)" class="flex-1 accent-brand-500 h-1 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                            <div class="flex items-center justify-between gap-4">
+                                <span class="w-20 font-medium">📺 White Noise</span>
+                                <input type="range" min="0" max="100" value="0" oninput="updateAudioChannel('white', this.value)" class="flex-1 accent-brand-500 h-1 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                            <div class="flex items-center justify-between gap-4">
+                                <span class="w-20 font-medium">☕ Lofi Beats</span>
+                                <input type="range" min="0" max="100" value="0" oninput="updateAudioChannel('lofi', this.value)" class="flex-1 accent-brand-500 h-1 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                            <div class="flex items-center justify-between gap-4">
+                                <span class="w-20 font-medium">⛏️ Blocks Synth</span>
+                                <input type="range" min="0" max="100" value="0" oninput="updateAudioChannel('minecraft', this.value)" class="flex-1 accent-brand-500 h-1 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="assignments-panel" class="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-lg font-bold">Synchronized Assignments Desk</h2>
+                            <p class="text-xs text-slate-500">Tasks pull exclusively from your custom timetable roster; due dates help surface urgency.</p>
+                        </div>
+                        <button onclick="openAssignmentModal()" class="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1.5">
+                            <i class="fa-solid fa-plus"></i> File Assignment
+                        </button>
+                    </div>
+                    <div id="assignment-container" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="account-modal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="panel bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-bold">Account</h3>
+                <button onclick="closeAccountModal()" class="text-slate-400 hover:text-slate-600 text-sm">Close</button>
+            </div>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Username</label>
+                    <div id="account-username" class="font-bold text-sm">—</div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Email</label>
+                    <div id="account-email" class="text-sm text-slate-500">—</div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Password</label>
+                    <div class="flex items-center gap-2">
+                        <input id="account-password" type="password" readonly class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm">
+                        <button id="account-pass-toggle" onclick="togglePasswordVisibility('account-password','account-pass-toggle')" class="px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-800"><i class="fa-solid fa-eye"></i></button>
+                    </div>
+                </div>
+                <div class="flex justify-end pt-2">
+                    <button onclick="closeAccountModal()" class="px-4 py-2 text-xs text-slate-500 font-medium">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-timetable" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
+            <h3 class="text-lg font-bold">Add Class to Schedule</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Class Subject Name</label>
+                    <input type="text" id="input-class-name" placeholder="e.g., AP Calculus BC" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Time Window</label>
+                        <input type="text" id="input-class-time" placeholder="e.g., 08:30 AM" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                    </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Subject Color</label>
+                    <input type="color" id="input-class-color" value="#a78bfa" class="w-16 h-10 rounded-lg p-0 border-0 bg-transparent">
+                </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Rigor Tier Level</label>
+                        <select id="input-class-level" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                            <option value="AP">AP</option>
+                            <option value="AICE">AICE</option>
+                            <option value="HONORS">HONORS</option>
+                            <option value="ACADEMIC">ACADEMIC</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 justify-end pt-2">
+                <button onclick="closeModal('modal-timetable')" class="px-4 py-2 text-xs text-slate-500 font-medium">Cancel</button>
+                <button onclick="saveTimetableClass()" class="px-4 py-2 text-xs bg-brand-600 text-white font-bold rounded-xl shadow-md">Commit Block</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-custom-session" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
+            <h3 class="text-lg font-bold">Create Custom Workspace Preset</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Preset Label Name</label>
+                    <input type="text" id="input-preset-name" placeholder="e.g., Coding Sprint" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Base Target Time (Minutes)</label>
+                    <input type="number" id="input-preset-time" value="45" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                </div>
+            </div>
+            <div class="flex items-center gap-2 justify-end pt-2">
+                <button onclick="closeModal('modal-custom-session')" class="px-4 py-2 text-xs text-slate-500 font-medium">Cancel</button>
+                <button onclick="saveCustomSession()" class="px-4 py-2 text-xs bg-brand-600 text-white font-bold rounded-xl shadow-md">Deploy Preset</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-assignment" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
+            <h3 class="text-lg font-bold">File Assignment Task</h3>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Task Context</label>
+                    <input type="text" id="input-task-name" placeholder="e.g., Finish Lab Writeup" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Synchronized Subject Source</label>
+                    <select id="input-task-subject" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500">
+                        </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-400 uppercase mb-1">Deadline</label>
+                    <div class="relative">
+                        <input type="text" id="input-task-deadline" readonly placeholder="Select date" class="w-full bg-slate-50 dark:bg-slate-950 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-brand-500 cursor-pointer" onclick="toggleDatepicker('input-task-deadline')">
+                        <div id="datepicker-input-task-deadline" class="datepicker hidden absolute z-50 mt-2 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg shadow-xl">
+                            <div class="dp-header">
+                                <div class="dp-controls">
+                                    <button type="button" onclick="changeMonth(-1,'input-task-deadline')">‹</button>
+                                </div>
+                                <div class="dp-month" id="dp-month-input-task-deadline">May 2026</div>
+                                <div class="dp-controls">
+                                    <button type="button" onclick="changeMonth(1,'input-task-deadline')">›</button>
+                                </div>
+                            </div>
+                            <div class="dp-grid" id="dp-grid-input-task-deadline"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2 justify-end pt-2">
+                <button onclick="closeModal('modal-assignment')" class="px-4 py-2 text-xs text-slate-500 font-medium">Cancel</button>
+                <button onclick="saveAssignment()" class="px-4 py-2 text-xs bg-brand-600 text-white font-bold rounded-xl shadow-md">Deploy Task</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="engine-side" aria-hidden="true">
+        <div id="engine-resizer" class="engine-resizer" aria-hidden="true"></div>
+        <div class="engine-side-panel">
+            <div class="engine-side-header">
+                <div>
+                    <h3>StriaFocus Engine</h3>
+                    <p>Embedded AI study engine inside your StriaFocus workspace.</p>
+                </div>
+                <button class="engine-side-close" onclick="closeEngineModal()" aria-label="Close engine panel"><i class="fa-solid fa-xmark fa-lg"></i></button>
+            </div>
+            <div class="engine-side-body">
+                <iframe id="engine-iframe" src="" title="StriaFocus Engine"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script>
+       // HIGH-FIDELITY AUDIO STREAMING ENGINE
+    </script>
+
+    <div id="modal-quests" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-white dark:bg-slate-900 w-full max-w-lg p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-bold">Daily Quests</h3>
+                <button onclick="closeModal('modal-quests')" class="text-slate-400 hover:text-slate-600 text-sm">Close</button>
+            </div>
+            <div id="quests-list" class="space-y-3 text-sm">
+                <!-- quests injected here -->
+            </div>
+            <div class="text-xs text-slate-400">Quests reset daily. Complete to earn XP and level-up rewards.</div>
+        </div>
+    </div>
+
+    <div id="quick-add" class="fixed bottom-6 left-1/2 transform -translate-x-1/2 hidden z-50">
+        <div class="quick-panel">
+            <div class="flex items-start gap-3">
+                <div class="flex-1">
+                    <input id="quick-input" placeholder="Quick add — e.g. 'Finish lab (Chemistry)' or 'Read ch.5 (Biology)'" class="quick-input" />
+                    <div class="mt-2 quick-hint">Press <strong>/</strong> or <strong>N</strong> to open. Type your task and press Enter to add instantly.</div>
+                </div>
+                <div class="flex flex-col gap-2 items-end">
+                    <button onclick="commitQuickAdd()" class="px-4 py-2 rounded bg-brand-600 text-white">Add</button>
+                    <button onclick="toggleQuickAdd(false)" class="px-3 py-2 rounded border">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Layout customization modal -->
+    <div id="layout-custom-modal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="text-lg font-bold">Customize Layout</h3>
+                <button onclick="closeLayoutCustom()" class="text-slate-400 hover:text-slate-600 text-sm">Close</button>
+            </div>
+            <div class="space-y-3 text-sm">
+                <label class="flex items-center gap-2"><input type="checkbox" id="hide-timetable"> Hide Timetable</label>
+                <label class="flex items-center gap-2"><input type="checkbox" id="hide-session-engine"> Hide Session Engine</label>
+                <label class="flex items-center gap-2"><input type="checkbox" id="hide-assignments"> Hide Assignments</label>
+                <label class="flex items-center gap-2"><input type="checkbox" id="hide-audio"> Hide Audio Controls</label>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="applyLayoutCustom()" class="px-4 py-2 text-xs bg-brand-600 text-white font-bold rounded-xl shadow-md">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-container" style="position:fixed;right:20px;bottom:20px;z-index:9999;display:flex;flex-direction:column;gap:10px;align-items:flex-end"></div>
+
+    <script>
+const AudioEngine = {
+    channels: {},
+    context: null,
+
+    ensureContext() {
+        if (this.context) return this.context;
+        this.context = new (window.AudioContext || window.webkitAudioContext)();
+        return this.context;
+    },
+
+    createNoiseBuffer(duration = 2) {
+        const ctx = this.ensureContext();
+        const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < data.length; i += 1) {
+            data[i] = (Math.random() * 2 - 1) * 0.35;
+        }
+        return buffer;
+    },
+
+    createNoiseChannel(type) {
+        const ctx = this.ensureContext();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        gain.connect(ctx.destination);
+
+        const source = ctx.createBufferSource();
+        source.buffer = this.createNoiseBuffer();
+        source.loop = true;
+
+        const filter = ctx.createBiquadFilter();
+        if (type === 'rain') {
+            filter.type = 'bandpass';
+            filter.frequency.value = 1350;
+            filter.Q.value = 1.6;
+        } else {
+            filter.type = 'lowpass';
+            filter.frequency.value = 700;
+            filter.Q.value = 0.85;
+        }
+
+        source.connect(filter);
+        filter.connect(gain);
+        source.start();
+
+        this.channels[type] = { kind: 'noise', gain, source, filter };
+    },
+
+    createLofiChannel() {
+        const ctx = this.ensureContext();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        gain.connect(ctx.destination);
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 900;
+        filter.Q.value = 1.2;
+
+        const osc = ctx.createOscillator();
+        osc.type = 'triangle';
+
+        const voiceGain = ctx.createGain();
+        voiceGain.gain.value = 0;
+
+        const delay = ctx.createDelay();
+        delay.delayTime.value = 0.26;
+        const feedback = ctx.createGain();
+        feedback.gain.value = 0.22;
+
+        osc.connect(filter);
+        filter.connect(voiceGain);
+        voiceGain.connect(gain);
+        voiceGain.connect(delay);
+        delay.connect(feedback);
+        feedback.connect(delay);
+        delay.connect(gain);
+
+        osc.start();
+
+        const notes = [220, 246.94, 196, 261.63, 233.08];
+        let step = 0;
+        const scheduleNote = () => {
+            const now = ctx.currentTime;
+            osc.frequency.setValueAtTime(notes[step], now);
+            voiceGain.gain.cancelScheduledValues(now);
+            voiceGain.gain.setValueAtTime(0.001, now);
+            voiceGain.gain.linearRampToValueAtTime(0.14, now + 0.16);
+            voiceGain.gain.exponentialRampToValueAtTime(0.001, now + 1.35);
+            step = (step + 1) % notes.length;
+        };
+
+        scheduleNote();
+        const interval = setInterval(scheduleNote, 1450);
+        this.channels.lofi = { kind: 'pattern', gain, interval };
+    },
+
+    createMinecraftChannel() {
+        const ctx = this.ensureContext();
+        const gain = ctx.createGain();
+        gain.gain.value = 0;
+        gain.connect(ctx.destination);
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 1500;
+        filter.Q.value = 0.9;
+        filter.connect(gain);
+
+        const notes = [523.25, 659.25, 783.99, 659.25];
+        let step = 0;
+
+        const playNote = () => {
+            const now = ctx.currentTime;
+            const osc = ctx.createOscillator();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(notes[step], now);
+
+            const noteGain = ctx.createGain();
+            noteGain.gain.setValueAtTime(0.0001, now);
+            noteGain.gain.exponentialRampToValueAtTime(0.14, now + 0.02);
+            noteGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+
+            osc.connect(noteGain);
+            noteGain.connect(filter);
+            osc.start(now);
+            osc.stop(now + 0.28);
+
+            step = (step + 1) % notes.length;
+        };
+
+        playNote();
+        const interval = setInterval(playNote, 680);
+        this.channels.minecraft = { kind: 'pattern', gain, interval };
+    },
+
+    initChannel(type) {
+        if (this.channels[type]) return;
+        if (type === 'rain' || type === 'white') {
+            this.createNoiseChannel(type);
+        } else if (type === 'lofi') {
+            this.createLofiChannel();
+        } else if (type === 'minecraft') {
+            this.createMinecraftChannel();
+        }
+    },
+
+    setVolume(type, volumePercent) {
+        const ctx = this.ensureContext();
+        if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+        }
+
+        this.initChannel(type);
+        const channel = this.channels[type];
+        if (!channel) return;
+
+        const targetVolume = Math.max(0, Math.min(100, Number(volumePercent))) / 100;
+        channel.gain.gain.setTargetAtTime(targetVolume * 0.8, ctx.currentTime, 0.03);
+    },
+
+    unlockAudio() {
+        const statusEl = document.getElementById('audio-status');
+        const button = document.getElementById('btn-audio-unlock');
+        const ctx = this.ensureContext();
+
+        ctx.resume().then(() => {
+            if (statusEl) statusEl.innerText = 'Audio enabled. Adjust the sliders to hear each channel.';
+            if (button) {
+                button.innerText = 'Audio Ready';
+                button.disabled = true;
+                button.classList.add('opacity-60', 'cursor-not-allowed');
+            }
+        }).catch(() => {
+            if (statusEl) statusEl.innerText = 'Click a slider or button again to enable sound.';
+        });
+    },
+
+    playTransitionChime() {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+        osc.frequency.linearRampToValueAtTime(659.25, ctx.currentTime + 0.18);
+
+        gain.gain.setValueAtTime(0.18, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.42);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.45);
+    }
+};
+
+// Interface pipeline connector
+function updateAudioChannel(channel, val) {
+    AudioEngine.setVolume(channel, parseInt(val, 10));
+}
+    </script>
+
+    <script>
+        let currentUser = null;
+        
+        // Base structure structure template
+        const defaultState = {
+            exp: 0,
+            targetMinutes: 30,
+            breaksCount: 1,
+            accentColor: "#0ea5a4",
+            isDarkMode: true,
+            timetable: [
+                { id: 1, time: "08:30 AM", name: "AP Calculus BC", level: "AP" },
+                { id: 2, time: "10:15 AM", name: "AICE Chemistry", level: "AICE" }
+            ],
+            assignments: [
+                { id: 1, title: "Study Guide Page 3", subject: "AP Calculus BC", dueDate: "2026-06-05" }
+            ],
+            customPresets: [],
+            activePreset: 'default-pomodoro'
+        };
+
+        const rankTitles = [
+            'Scholar',
+            'Focus Adept',
+            'Habit Architect',
+            'Momentum Master',
+            'Zen Strategist',
+            'Productivity Sage',
+            'Flow Commander',
+            'Peak Performer',
+            'Stria Virtuoso',
+            'Legacy Luminary'
+        ];
+
+        const rankThresholds = [0, 55, 130, 230, 360, 520, 710, 930, 1180, 1450];
+
+        let state = JSON.parse(JSON.stringify(defaultState));
+
+        let runtime = {
+            timerInterval: null,
+            isRunning: false,
+            isBreakMode: false,
+            timeLeftSeconds: 1800,
+            calculatedFocusSeconds: 1500,
+            calculatedBreakSeconds: 300
+        };
+
+        let authIsSignUp = false;
+
+        function toggleAuthMode() {
+            authIsSignUp = !authIsSignUp;
+            document.getElementById('auth-title-modifier').innerText = authIsSignUp ? 'Create Profile' : 'Sign In';
+            document.getElementById('auth-subtitle').innerText = authIsSignUp ? "Generate a fresh local database encryption shell." : "Sign in to sync your custom environment parameters.";
+            document.getElementById('btn-auth-submit').innerText = authIsSignUp ? "Create Profile System" : "Access System";
+            document.getElementById('btn-auth-toggle').innerText = authIsSignUp ? "Already have an account? Login Here" : "Need a secure local account? Create Profile";
+        }
+
+        function handleAuthSubmit() {
+            const user = document.getElementById('auth-username').value.trim();
+            const pass = document.getElementById('auth-password').value;
+            if(!user || !pass) return alert("Credentials mandatory.");
+
+            const db = JSON.parse(localStorage.getItem('stria_focus_auth_db') || '{}');
+            const remember = !!document.getElementById('auth-remember')?.checked;
+
+            if(authIsSignUp) {
+                if(db[user]) return alert("Account tag already claimed.");
+                const email = document.getElementById('auth-email') ? document.getElementById('auth-email').value.trim() : '';
+                db[user] = { password: pass, email: email || '', appState: JSON.parse(JSON.stringify(defaultState)) };
+                localStorage.setItem('stria_focus_auth_db', JSON.stringify(db));
+                alert("Account initialized successfully.");
+                authIsSignUp = false;
+                toggleAuthMode();
+            } else {
+                if(!db[user] || db[user].password !== pass) return alert("Invalid identification parameters.");
+                currentUser = user;
+                state = db[user].appState || JSON.parse(JSON.stringify(defaultState));
+                if(remember) {
+                    localStorage.setItem('stria_focus_current_user', currentUser);
+                } else {
+                    localStorage.removeItem('stria_focus_current_user');
+                }
+                launchDashboard();
+            }
+        }
+
+        function saveProfileToDisk() {
+            if(!currentUser) return;
+            const db = JSON.parse(localStorage.getItem('stria_focus_auth_db') || '{}');
+            if(db[currentUser]) {
+                db[currentUser].appState = state;
+                localStorage.setItem('stria_focus_auth_db', JSON.stringify(db));
+            }
+        }
+
+        function restoreSavedSession() {
+            const storedUser = localStorage.getItem('stria_focus_current_user');
+            const db = JSON.parse(localStorage.getItem('stria_focus_auth_db') || '{}');
+            if(storedUser && db[storedUser]) {
+                currentUser = storedUser;
+                state = db[currentUser].appState || JSON.parse(JSON.stringify(defaultState));
+                launchDashboard();
+                return true;
+            }
+            return false;
+        }
+
+        window.addEventListener('beforeunload', () => {
+            saveProfileToDisk();
+        });
+
+        function togglePasswordVisibility(inputId, iconId) {
+            const inp = document.getElementById(inputId);
+            const btn = document.getElementById(iconId) || null;
+            if(!inp) return;
+            if(inp.type === 'password') {
+                inp.type = 'text';
+                if(btn) btn.innerHTML = '<i class="fa-solid fa-eye-slash"></i>';
+            } else {
+                inp.type = 'password';
+                if(btn) btn.innerHTML = '<i class="fa-solid fa-eye"></i>';
+            }
+        }
+
+        function showAccountModal() {
+            if(!currentUser) {
+                return alert('Please log in to view account details.');
+            }
+            const db = JSON.parse(localStorage.getItem('stria_focus_auth_db') || '{}');
+            const record = db[currentUser];
+            if(!record) return alert('Account not found.');
+            document.getElementById('account-username').innerText = currentUser;
+            document.getElementById('account-email').innerText = record.email || '—';
+            document.getElementById('account-password').value = record.password || '';
+            document.getElementById('account-password').type = 'password';
+            const acctModal = document.getElementById('account-modal');
+            acctModal.style.display = 'flex';
+        }
+
+        function closeAccountModal() {
+            const acctModal = document.getElementById('account-modal');
+            acctModal.style.display = 'none';
+        }
+
+        function openEngineModal() {
+            const side = document.getElementById('engine-side');
+            const iframe = document.getElementById('engine-iframe');
+            const btn = document.getElementById('btn-open-engine');
+            if (iframe) {
+                const currentSrc = iframe.getAttribute('src') || '';
+                if (!currentSrc || currentSrc === 'about:blank') {
+                    iframe.setAttribute('src', './striafocus ai engine.html');
+                }
+            }
+            // shrink the button and slide panel in
+            if (btn) setTimeout(() => btn.classList.add('small'), 30);
+            side.classList.add('open');
+            side.setAttribute('aria-hidden', 'false');
+            // shift main interface to make room for side panel
+            setTimeout(() => {
+                const app = document.getElementById('app-interface');
+                if (app) {
+                    const w = window.getComputedStyle(side).width || '420px';
+                    app.style.marginRight = w;
+                    app.style.transition = 'margin-right .36s cubic-bezier(.2,.9,.2,1)';
+                }
+                updateTimeScaleIfNeeded();
+            }, 40);
+        }
+
+        function closeEngineModal() {
+            const side = document.getElementById('engine-side');
+            const iframe = document.getElementById('engine-iframe');
+            const btn = document.getElementById('btn-open-engine');
+            // restore button size and slide panel out
+            if (btn) btn.classList.remove('small');
+            side.classList.remove('open');
+            side.setAttribute('aria-hidden', 'true');
+            // remove margin shift on main interface
+            const app = document.getElementById('app-interface');
+            if (app) {
+                app.style.marginRight = '';
+            }
+            // unload iframe after panel transition to free resources
+            setTimeout(() => { if (iframe) iframe.setAttribute('src', ''); }, 600);
+        }
+
+        function launchDashboard() {
+            document.getElementById('auth-wall').classList.add('hidden');
+            document.getElementById('app-interface').classList.remove('hidden');
+            document.getElementById('auth-remember').checked = true;
+            
+            // Rehydrate saved settings configurations
+            changeAccent(state.accentColor || "#8b5cf6");
+            document.getElementById('accentColor').value = state.accentColor || "#8b5cf6";
+            if(!state.isDarkMode) {
+                document.documentElement.classList.remove('dark');
+                document.getElementById('theme-icon').className = "fa-solid fa-sun text-amber-500";
+            }
+            
+            document.getElementById('display-target-time').innerText = state.targetMinutes + 'm';
+            document.getElementById('display-breaks-count').innerText = state.breaksCount;
+
+            // Rebuild active components
+            rebuildCustomPresetInterface();
+            highlightSelectedPreset();
+            renderTimetable();
+            renderAssignments();
+            calculateIntervalEngine();
+            updateEXPTrackerDisplay();
+            renderQuote();
+            calculateStreak();
+            ensureDailyQuests();
+            assessQuests();
+        }
+
+        function logout() {
+            if(currentUser) {
+                const keep = confirm("Keep me signed in on this browser for next time?");
+                if(keep) {
+                    localStorage.setItem('stria_focus_current_user', currentUser);
+                } else {
+                    localStorage.removeItem('stria_focus_current_user');
+                }
+            }
+            saveProfileToDisk();
+            currentUser = null;
+            state = JSON.parse(JSON.stringify(defaultState));
+            document.getElementById('app-interface').classList.add('hidden');
+            document.getElementById('auth-wall').classList.remove('hidden');
+        }
+
+        // Theme Mechanics
+        function toggleTheme() {
+            const html = document.documentElement;
+            const icon = document.getElementById('theme-icon');
+            let nextIsDark;
+
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                icon && (icon.className = "fa-solid fa-sun text-amber-500");
+                state.isDarkMode = false;
+                nextIsDark = false;
+            } else {
+                html.classList.add('dark');
+                icon && (icon.className = "fa-solid fa-moon text-slate-400");
+                state.isDarkMode = true;
+                nextIsDark = true;
+            }
+
+            saveProfileToDisk();
+
+            // Sync theme into the nested iframe engine.
+            const engineIframe = document.getElementById('engine-iframe');
+            if (engineIframe && engineIframe.contentWindow) {
+                engineIframe.contentWindow.postMessage({
+                    type: 'SYNC_STRIA_THEME',
+                    theme: nextIsDark ? 'dark' : 'light'
+                }, '*');
+            }
+        }
+
+
+        function hexToRgb(hex) {
+            const normalized = hex.replace('#', '');
+            const fullHex = normalized.length === 3 ? normalized.split('').map(ch => ch + ch).join('') : normalized;
+            const intVal = parseInt(fullHex, 16);
+            const r = (intVal >> 16) & 255;
+            const g = (intVal >> 8) & 255;
+            const b = intVal & 255;
+            return `${r}, ${g}, ${b}`;
+        }
+
+        function changeAccent(color) {
+            state.accentColor = color;
+            document.documentElement.style.setProperty('--sf-accent', color);
+            document.documentElement.style.setProperty('--sf-accent-rgb', hexToRgb(color));
+            const customStyles = document.getElementById('custom-theme-style') || document.createElement('style');
+            customStyles.id = 'custom-theme-style';
+            customStyles.innerHTML = `
+                .bg-brand-600 { background-color: ${color} !important; }
+                .text-brand-500 { color: ${color} !important; }
+                .border-brand-500\\/30 { border-color: ${color}4d !important; }
+                .bg-brand-500\\/5 { background-color: ${color}0d !important; }
+                .bg-brand-500\\/10 { background-color: ${color}1a !important; }
+                .focus\\:border-brand-500:focus { border-color: ${color} !important; }
+                .accent-brand-500 { accent-color: ${color} !important; }
+            `;
+            document.head.appendChild(customStyles);
+            // sync quests button and existing quest bars to accent color
+            const qb = document.getElementById('btn-open-quests');
+            if(qb) {
+                qb.style.background = color;
+                qb.style.boxShadow = `0 8px 24px ${color}44`;
+            }
+            // sync engine launch button to accent
+            const eb = document.getElementById('btn-open-engine');
+            if (eb) {
+                eb.style.background = color;
+                eb.style.boxShadow = `0 16px 40px ${color}33`;
+                eb.style.color = '#fff';
+            }
+            document.querySelectorAll('[id^="quest-bar-"]').forEach(el => {
+                el.style.background = color;
+            });
+            saveProfileToDisk();
+        }
+
+        // Persistent study sessions and quotes
+        if(!state.sessionsCompleted) state.sessionsCompleted = []; // array of yyyy-mm-dd strings
+        if(!state.quotes) state.quotes = [
+            'Small consistent steps beat sporadic bursts.',
+            'Focus is a muscle; train it daily.',
+            'Productivity comes from clarity, not urgency.',
+            'Breaks sharpen your ability to commit.',
+            'Deep work builds durable advantage.',
+            'Celebrate the tiny wins; they compound.',
+            'Use constraints to unlock creativity.'
+        ];
+        if(!state.customQuotes) state.customQuotes = {}; // dayIndex -> custom quote
+        if(!state.quests) state.quests = [];
+        if(!state.lastQuestDate) state.lastQuestDate = null;
+
+        // Gamified Progress Layout Tracker (100-level support)
+        function addRewardEXP(amount) {
+            const beforeLevel = getRankData(state.exp).level;
+            state.exp += amount;
+            const afterLevel = getRankData(state.exp).level;
+            updateEXPTrackerDisplay();
+            saveProfileToDisk();
+            if(afterLevel > beforeLevel) {
+                const title = rankTitles[ Math.min(afterLevel-1, rankTitles.length-1) ] || `Lv. ${afterLevel}`;
+                showToast(`You reached Lv. ${afterLevel} — ${title}!`, {accent: '#8b5cf6', icon: 'fa-solid fa-award'});
+                AudioEngine.playTransitionChime();
+            }
+        }
+
+        function getRankData(exp) {
+            // increasing difficulty per level: thresholds grow with level
+            let level = 1;
+            let acc = 0;
+            let needed = 100;
+            while(level < 100) {
+                needed = Math.floor(100 * level * Math.pow(1.12, level-1));
+                if(exp < acc + needed) break;
+                acc += needed;
+                level++;
+            }
+            const currentThreshold = acc;
+            const nextThreshold = acc + needed;
+            const progress = Math.min(100, Math.round(((exp - currentThreshold) / (nextThreshold - currentThreshold)) * 100));
+            const title = rankTitles[Math.min(level-1, rankTitles.length-1)] || `Lv ${level}`;
+            return { level, title, progress, currentThreshold, nextThreshold };
+        }
+
+        function updateEXPTrackerDisplay() {
+            const rankData = getRankData(state.exp);
+            const rankNumber = rankData.level;
+            document.getElementById('rank-level').innerText = `Lv. ${rankNumber} ${rankData.title}`;
+            document.getElementById('exp-bar').style.width = `${rankData.progress}%`;
+            document.getElementById('exp-text').innerText = `${state.exp - rankData.currentThreshold}/${rankData.nextThreshold - rankData.currentThreshold} XP`;
+        }
+
+        // Session / streak helpers (see detailed implementation further below)
+
+        function calculateStreak() {
+            const days = state.sessionsCompleted.slice().sort().reverse();
+            if(days.length === 0) { state.currentStreak = 0; renderStreak(); return; }
+            let streak = 0;
+            let cursor = new Date();
+            for(let i=0;i<365;i++){
+                const d = new Date(cursor.getTime() - i*24*60*60*1000).toISOString().slice(0,10);
+                if(state.sessionsCompleted.includes(d)) streak++; else break;
+            }
+            state.currentStreak = streak;
+            renderStreak();
+        }
+
+        function renderStreak() {
+            const el = document.getElementById('streak-count');
+            el && (el.innerText = (state.currentStreak || 0));
+        }
+
+        // Quote of the day
+        function renderQuote() {
+            // fixed premium quote per request
+            document.getElementById('quote-text').innerText = '"Do the best you can until you know better. Then when you know better, do better."';
+            document.getElementById('quote-author').innerText = '— Maya Angelou';
+        }
+
+        function toggleQuoteEdit() {
+            const row = document.getElementById('quote-edit-row');
+            const input = document.getElementById('quote-edit-input');
+            if(row.classList.contains('hidden')) {
+                const day = new Date().getDay();
+                input.value = state.customQuotes[day] || state.quotes[day % state.quotes.length];
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
+        }
+
+        function saveQuote() {
+            const input = document.getElementById('quote-edit-input');
+            const day = new Date().getDay();
+            if(input.value.trim()) {
+                state.customQuotes[day] = input.value.trim();
+            } else {
+                delete state.customQuotes[day];
+            }
+            renderQuote();
+            toggleQuoteEdit();
+            saveProfileToDisk();
+            showToast('Quote saved', {accent: '#06b6d4', icon: 'fa-solid fa-quote-right'});
+        }
+
+        // --- Quest auto-completion & progress tracking (track seconds for live progress) ---
+        if(!state.studySecondsToday) state.studySecondsToday = 0;
+        if(!state.assignmentsCompletedToday) state.assignmentsCompletedToday = 0;
+
+        function assessQuests() {
+            ensureDailyQuests();
+            let changed = false;
+            state.quests.forEach(q => {
+                if(q.completed) return;
+                if(q.unit === 'mins') {
+                    if((state.studySecondsToday||0) >= (q.target * 60)) { q.completed = true; changed = true; addRewardEXP(q.reward); showToast(`Quest complete: ${q.label}`, {accent:'#10b981', icon:'fa-solid fa-check'}); }
+                } else if(q.unit === 'tasks') {
+                    if(state.assignmentsCompletedToday >= q.target) { q.completed = true; changed = true; addRewardEXP(q.reward); showToast(`Quest complete: ${q.label}`, {accent:'#10b981', icon:'fa-solid fa-check'}); }
+                }
+            });
+            if(changed) saveProfileToDisk();
+            // update UI if quests modal is open
+            updateQuestUI();
+        }
+        function recordSessionCompletion(seconds) {
+            const today = new Date().toISOString().slice(0,10);
+            if(!state.sessionsCompleted.includes(today)) state.sessionsCompleted.push(today);
+            // accumulate seconds studied this session
+            const secs = (typeof seconds === 'number') ? seconds : (runtime.calculatedFocusSeconds || 0);
+            state.studySecondsToday = (state.studySecondsToday || 0) + secs;
+            calculateStreak();
+            saveProfileToDisk();
+            assessQuests();
+        }
+
+        // Quest generator
+        function generateDailyQuests() {
+            // easy, medium, hard
+            return [
+                { id: Date.now()+1, label: `Study for at least 25 mins`, target: 25, unit: 'mins', reward: 30, progress:0, completed:false, difficulty:'easy' },
+                { id: Date.now()+2, label: `Complete 2 assignments`, target: 2, unit: 'tasks', reward: 60, progress:0, completed:false, difficulty:'medium' },
+                { id: Date.now()+3, label: `Focus for 90 mins total`, target: 90, unit: 'mins', reward: 150, progress:0, completed:false, difficulty:'hard' }
+            ];
+        }
+
+        function ensureDailyQuests() {
+            const today = new Date().toISOString().slice(0,10);
+            if(state.lastQuestDate !== today) {
+                state.quests = generateDailyQuests();
+                state.lastQuestDate = today;
+                // reset daily counters
+                state.studyMinutesToday = 0;
+                state.assignmentsCompletedToday = 0;
+                saveProfileToDisk();
+            }
+        }
+
+        function openQuestModal() {
+            ensureDailyQuests();
+            const list = document.getElementById('quests-list');
+            list.innerHTML = '';
+            state.quests.forEach(q => {
+                const progress = q.unit === 'mins' ? Math.min(1, (state.studySecondsToday||0) / (q.target * 60)) : Math.min(1, (state.assignmentsCompletedToday||0) / q.target);
+                const pct = Math.round(progress * 100);
+                list.innerHTML += `
+                    <div id="quest-${q.id}" class="p-4 rounded-2xl border bg-white dark:bg-slate-900 shadow-sm">
+                        <div class="flex items-start justify-between">
+                            <div>
+                                <div class="text-sm font-bold">${q.label}</div>
+                                <div class="text-xs text-slate-400 mt-1">Reward: ${q.reward} XP — ${q.difficulty}</div>
+                            </div>
+                            <div id="quest-status-${q.id}" class="text-xs font-semibold" style="color:${q.completed? '#10b981' : pct>=100 ? '#f59e0b' : '#94a3b8'}">${q.completed? 'Done' : (pct>=100? 'Ready' : pct + '%')}</div>
+                        </div>
+                        <div class="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
+                            <div id="quest-bar-${q.id}" class="h-2 rounded-full" style="width:${pct}%; background: ${state.accentColor || '#10b981'}"></div>
+                        </div>
+                    </div>
+                `;
+            });
+            document.getElementById('modal-quests').style.display = 'flex';
+        }
+
+        function updateQuestUI() {
+            // update visible quest progress bars/status if modal is open
+            if(!document.getElementById('modal-quests') || document.getElementById('modal-quests').style.display === 'none') return;
+            state.quests.forEach(q => {
+                const bar = document.getElementById(`quest-bar-${q.id}`);
+                const status = document.getElementById(`quest-status-${q.id}`);
+                if(!bar || !status) return;
+                const progress = q.unit === 'mins' ? Math.min(1, (state.studySecondsToday||0) / (q.target * 60)) : Math.min(1, (state.assignmentsCompletedToday||0) / q.target);
+                const pct = Math.round(progress * 100);
+                bar.style.width = pct + '%';
+                bar.style.background = state.accentColor || '#10b981';
+                if(q.completed) { status.innerText = 'Done'; status.style.color = '#10b981'; }
+                else if(pct >= 100) { status.innerText = 'Ready'; status.style.color = '#f59e0b'; }
+                else { status.innerText = pct + '%'; status.style.color = '#94a3b8'; }
+            });
+        }
+
+        function completeQuest(id) {
+            const q = state.quests.find(x => x.id === id);
+            if(!q) return;
+            if(q.completed) return showToast('Quest already completed', {accent:'#999'});
+            q.completed = true;
+            addRewardEXP(q.reward);
+            saveProfileToDisk();
+            openQuestModal();
+        }
+
+        // Toast helper
+        function showToast(text, opts={}) {
+            const container = document.getElementById('toast-container');
+            const el = document.createElement('div');
+            el.className = 'toast-card';
+            el.style.background = 'linear-gradient(90deg, rgba(255,255,255,0.95), rgba(255,255,255,0.9))';
+            el.style.borderRadius = '12px';
+            el.style.padding = '12px 14px';
+            el.style.boxShadow = '0 10px 30px rgba(2,6,23,0.2)';
+            el.style.color = '#0f1724';
+            el.style.display = 'flex';
+            el.style.alignItems = 'center';
+            el.style.gap = '10px';
+            el.style.minWidth = '220px';
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(8px)';
+            const iconHtml = opts.icon ? `<i class="${opts.icon}" style="color:${opts.accent||'#8b5cf6'}"></i>` : '';
+            el.innerHTML = `<div style="flex:1"><div style="font-weight:700">${text}</div></div>`;
+            container.appendChild(el);
+            requestAnimationFrame(()=>{ el.style.transition='all 350ms cubic-bezier(.2,.9,.2,1)'; el.style.opacity='1'; el.style.transform='translateY(0)'; });
+            setTimeout(()=>{ el.style.opacity='0'; el.style.transform='translateY(8px)'; setTimeout(()=>el.remove(),400); }, 4200);
+        }
+
+        // Timetable Rendering & Sync Engine
+        function renderTimetable() {
+            const tbody = document.getElementById('timetable-rows');
+            tbody.innerHTML = '';
+            state.timetable.forEach(item => {
+                const color = item.color || (item.level === 'AP' ? '#ef4444' : item.level === 'AICE' ? '#3b82f6' : item.level === 'HONORS' ? '#f59e0b' : '#10b981');
+                const pillStyle = `background:${color}22; color:${color}; border:1px solid ${color}44; padding:6px 8px; border-radius:10px; font-weight:800; font-size:11px`;
+                tbody.innerHTML += `
+                    <tr draggable="true" ondragstart="onDragStart(event, ${item.id})" ondragover="onDragOver(event)" ondrop="onDrop(event, ${item.id})" class="hover:bg-slate-500/5 transition" data-id="${item.id}">
+                        <td class="p-3 font-mono text-xs font-semibold">${item.time}</td>
+                        <td class="p-3 font-medium">${item.name}</td>
+                        <td class="p-3">
+                            <span style="${pillStyle}">${item.level}</span>
+                        </td>
+                        <td class="p-3 text-right">
+                            <button onclick="deleteTimetableItem(${item.id})" class="text-slate-400 hover:text-red-500 text-xs transition"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>
+                `;
+            });
+            syncSubjectDropdowns();
+        }
+
+        function deleteTimetableItem(id) {
+            state.timetable = state.timetable.filter(i => i.id !== id);
+            renderTimetable();
+            saveProfileToDisk();
+        }
+
+        // Drag-and-drop reorder helpers for timetable
+        let __dragSourceId = null;
+        function onDragStart(e, id) {
+            __dragSourceId = Number(id);
+            try { e.dataTransfer.setData('text/plain', String(id)); } catch(_){}
+            e.currentTarget && e.currentTarget.classList.add('opacity-60');
+        }
+        function onDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        }
+        function onDrop(e, targetId) {
+            e.preventDefault();
+            const src = __dragSourceId || Number(e.dataTransfer.getData('text/plain'));
+            const dst = Number(targetId);
+            if(!src || !dst || src === dst) return;
+            reorderTimetable(src, dst);
+            __dragSourceId = null;
+        }
+        function reorderTimetable(srcId, targetId) {
+            const arr = state.timetable.slice();
+            const srcIdx = arr.findIndex(x => x.id === srcId);
+            const dstIdx = arr.findIndex(x => x.id === targetId);
+            if(srcIdx === -1 || dstIdx === -1) return;
+            const [item] = arr.splice(srcIdx, 1);
+            arr.splice(dstIdx, 0, item);
+            state.timetable = arr;
+            saveProfileToDisk();
+            renderTimetable();
+            showToast('Timetable order updated', {accent: state.accentColor});
+        }
+
+        // Break activity suggestions
+        const breakTips = [
+            'Stretch for 2 minutes: reach overhead and side bends.',
+            'Drink a glass of water to rehydrate.',
+            'Look at something 20 feet away for 20 seconds (reduce eye strain).',
+            'Stand and walk around your room for 1–2 minutes.',
+            'Do a quick breathing exercise: inhale 4s, hold 4s, exhale 6s.'
+        ];
+        function showBreakSuggestion() {
+            const tip = breakTips[Math.floor(Math.random() * breakTips.length)];
+            showToast(tip, {accent: '#06b6d4', icon: 'fa-solid fa-spa'});
+        }
+
+        // Quick-add overlay functions (keyboard shortcut: / or N)
+        function toggleQuickAdd(show = true) {
+            const el = document.getElementById('quick-add');
+            if(!el) return;
+            el.style.display = show ? 'block' : 'none';
+            if(show) {
+                setTimeout(()=> document.getElementById('quick-input').focus(), 80);
+            }
+        }
+        function commitQuickAdd() {
+            const v = document.getElementById('quick-input').value.trim();
+            if(!v) return toggleQuickAdd(false);
+            const m = v.match(/\(([^)]+)\)$/);
+            const subject = m ? m[1] : (state.timetable[0] && state.timetable[0].name) || 'General';
+            const title = m ? v.replace(/\([^)]*\)$/, '').trim() : v;
+            state.assignments.push({ id: Date.now(), title, subject, dueDate: null });
+            document.getElementById('quick-input').value = '';
+            toggleQuickAdd(false);
+            saveProfileToDisk();
+            renderAssignments();
+            showToast('Quick task added', {accent: state.accentColor});
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if(e.key === '/' || e.key.toLowerCase() === 'n') {
+                if(document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) return;
+                e.preventDefault(); toggleQuickAdd(true);
+            }
+            if(e.key === 'Enter' && document.getElementById('quick-add') && document.getElementById('quick-add').style.display !== 'none') {
+                commitQuickAdd();
+            }
+        });
+
+        function syncSubjectDropdowns() {
+            const select = document.getElementById('input-task-subject');
+            select.innerHTML = '';
+            state.timetable.forEach(item => {
+                select.innerHTML += `<option value="${item.name}">${item.name}</option>`;
+            });
+        }
+
+        // Assignments Desk Logic
+        function formatDateString(dateString) {
+            if(!dateString) return 'No deadline';
+            const date = new Date(dateString + 'T00:00:00');
+            return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        }
+
+        // Returns an object with label and tailwind color classes based on days left
+        function getDueMeta(dateString) {
+            if(!dateString) return { label: 'No deadline', badgeClass: 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300' };
+            const today = new Date();
+            const due = new Date(dateString + 'T00:00:00');
+            const msPerDay = 24 * 60 * 60 * 1000;
+            const daysLeft = Math.ceil((due - today) / msPerDay);
+
+            // Simplified mapping per user:
+            // - overdue or due today or within 2 days => RED (urgent)
+            // - within 3..10 days => YELLOW (sorta close)
+            // - >10 days => GREEN (still time)
+
+            if (daysLeft < 0) return { label: 'Overdue', badgeClass: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300' };
+            if (daysLeft <= 2) {
+                return { label: daysLeft === 0 ? 'Due Today' : (daysLeft === 1 ? 'Due Tomorrow' : `${daysLeft} days`), badgeClass: 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300' };
+            }
+            if (daysLeft <= 10) {
+                return { label: `${daysLeft} days`, badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300' };
+            }
+            return { label: `${daysLeft} days`, badgeClass: 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-300' };
+        }
+
+        function renderAssignments() {
+            const container = document.getElementById('assignment-container');
+            container.innerHTML = '';
+            if(state.assignments.length === 0) {
+                container.innerHTML = `<div class="col-span-2 text-center py-8 text-xs text-slate-400 font-mono">No assignments pending.</div>`;
+                return;
+            }
+            const sortedAssignments = [...state.assignments].sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+            sortedAssignments.forEach(task => {
+                const meta = getDueMeta(task.dueDate);
+                // find subject color from timetable
+                const subj = state.timetable.find(t => t.name === task.subject);
+                const color = subj ? (subj.color || '#a78bfa') : '#a78bfa';
+                container.innerHTML += `
+                    <div class="p-4 bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800/80 rounded-xl flex flex-col gap-3 hover:border-brand-500/40 transition" style="border-left:4px solid ${color}">
+                        <div>
+                            <span class="text-[10px] font-bold" style="color:${color}; display:block; margin-bottom:4px; text-transform:uppercase">${task.subject}</span>
+                            <p class="text-sm font-semibold">${task.title}</p>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px]">
+                            <span class="font-semibold text-slate-600 dark:text-slate-300">${formatDateString(task.dueDate)}</span>
+                            <span class="px-2 py-1 rounded-full ${meta.badgeClass}">${meta.label}</span>
+                        </div>
+                        <div class="flex justify-end">
+                            <button onclick="completeAssignment(${task.id})" class="w-9 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-emerald-500 hover:text-emerald-500 rounded-lg flex items-center justify-center text-xs shadow-sm transition">
+                                <i class="fa-solid fa-check"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function completeAssignment(id) {
+            // increment completed assignments today for quest tracking
+            state.assignmentsCompletedToday = (state.assignmentsCompletedToday || 0) + 1;
+            state.assignments = state.assignments.filter(a => a.id !== id);
+            renderAssignments();
+            addRewardEXP(35);
+            saveProfileToDisk();
+            assessQuests();
+        }
+
+        // Interval Matrix Calculations
+        function adjustTime(amount) {
+            state.targetMinutes = Math.max(5, state.targetMinutes + amount);
+            document.getElementById('display-target-time').innerText = state.targetMinutes + 'm';
+            calculateIntervalEngine();
+            saveProfileToDisk();
+        }
+
+        function adjustBreaks(amount) {
+            state.breaksCount = Math.max(0, state.breaksCount + amount);
+            document.getElementById('display-breaks-count').innerText = state.breaksCount;
+            calculateIntervalEngine();
+            saveProfileToDisk();
+        }
+
+        function calculateIntervalEngine() {
+            const totalSeconds = state.targetMinutes * 60;
+            if(state.breaksCount === 0) {
+                runtime.calculatedFocusSeconds = totalSeconds;
+                runtime.calculatedBreakSeconds = 0;
+            } else {
+                const individualBreakSeconds = 300; 
+                const totalBreakSeconds = state.breaksCount * individualBreakSeconds;
+                
+                if (totalBreakSeconds >= totalSeconds) {
+                    runtime.calculatedFocusSeconds = Math.floor(totalSeconds * 0.8);
+                    runtime.calculatedBreakSeconds = Math.floor((totalSeconds * 0.2) / state.breaksCount);
+                } else {
+                    runtime.calculatedFocusSeconds = totalSeconds - totalBreakSeconds;
+                    runtime.calculatedBreakSeconds = individualBreakSeconds;
+                }
+            }
+
+            document.getElementById('calc-focus-block').innerText = `${Math.floor(runtime.calculatedFocusSeconds / 60)} mins`;
+            document.getElementById('calc-break-block').innerText = `${state.breaksCount} x ${Math.floor(runtime.calculatedBreakSeconds / 60)} mins`;
+            
+            if(!runtime.isRunning) {
+                resetTimerToEngineCalculations();
+            }
+        }
+
+        function resetTimerToEngineCalculations() {
+            runtime.isBreakMode = false;
+            runtime.timeLeftSeconds = runtime.calculatedFocusSeconds;
+            updateTimerDisplay();
+            document.getElementById('timer-state-badge').innerText = "Operational Focus";
+        }
+
+        function setPreset(minutes, presetKey = 'default-pomodoro') {
+            state.targetMinutes = minutes;
+            state.activePreset = presetKey;
+            document.getElementById('display-target-time').innerText = minutes + 'm';
+            calculateIntervalEngine();
+            highlightSelectedPreset();
+            saveProfileToDisk();
+        }
+
+        function highlightSelectedPreset() {
+            document.querySelectorAll('#preset-container [data-preset-key]').forEach(button => {
+                button.classList.toggle('active-preset', button.dataset.presetKey === state.activePreset);
+            });
+        }
+
+        function updateTimerDisplay() {
+            const mins = Math.floor(runtime.timeLeftSeconds / 60).toString().padStart(2, '0');
+            const secs = (runtime.timeLeftSeconds % 60).toString().padStart(2, '0');
+            document.getElementById('time-countdown').innerText = `${mins}:${secs}`;
+        }
+
+        function toggleTimer() {
+            const btn = document.getElementById('btn-timer-trigger');
+            if(runtime.isRunning) {
+                clearInterval(runtime.timerInterval);
+                runtime.isRunning = false;
+                btn.innerHTML = `<i class="fa-solid fa-play mr-1.5"></i> Resume`;
+            } else {
+                runtime.isRunning = true;
+                btn.innerHTML = `<i class="fa-solid fa-pause mr-1.5"></i> Pause`;
+                runtime.timerInterval = setInterval(() => {
+                    if(runtime.timeLeftSeconds > 0) {
+                        runtime.timeLeftSeconds--;
+                        // if in focus mode, count study seconds live
+                        if(!runtime.isBreakMode) {
+                            state.studySecondsToday = (state.studySecondsToday || 0) + 1;
+                            // update UI live
+                            updateQuestUI();
+                            assessQuests();
+                        }
+                        updateTimerDisplay();
+                    } else {
+                        handleIntervalTransition();
+                    }
+                }, 1000);
+            }
+        }
+
+        function resetTimer() {
+            clearInterval(runtime.timerInterval);
+            runtime.isRunning = false;
+            document.getElementById('btn-timer-trigger').innerHTML = `<i class="fa-solid fa-play mr-1.5"></i> Start`;
+            resetTimerToEngineCalculations();
+        }
+
+        function handleIntervalTransition() {
+            AudioEngine.playTransitionChime();
+            clearInterval(runtime.timerInterval);
+            runtime.isRunning = false;
+            document.getElementById('btn-timer-trigger').innerHTML = `<i class="fa-solid fa-play mr-1.5"></i> Resume`;
+
+            // if we were in a focus block, count it towards study minutes
+            if(!runtime.isBreakMode) {
+                recordSessionCompletion();
+            }
+
+            if(!runtime.isBreakMode && runtime.calculatedBreakSeconds > 0) {
+                runtime.isBreakMode = true;
+                runtime.timeLeftSeconds = runtime.calculatedBreakSeconds;
+                document.getElementById('timer-state-badge').innerText = "System Rest Break";
+                addRewardEXP(50);
+                // show quick break suggestion
+                try { showBreakSuggestion(); } catch (e) { /* ignore if helper not loaded */ }
+            } else {
+                runtime.isBreakMode = false;
+                runtime.timeLeftSeconds = runtime.calculatedFocusSeconds;
+                document.getElementById('timer-state-badge').innerText = "Operational Focus";
+                addRewardEXP(15);
+            }
+            updateTimerDisplay();
+        }
+
+        // Custom Presets Generator Mapping
+        function rebuildCustomPresetInterface() {
+            const container = document.getElementById('preset-container');
+            // Retain defaults, wipe dynamic loads
+            container.innerHTML = `
+                <div class="preset-card">
+                    <button onclick="setPreset(25, 'default-pomodoro')" data-preset-key="default-pomodoro" class="preset-button p-3 rounded-xl border border-brand-500/30 bg-brand-500/5 dark:bg-brand-500/10 text-left hover:border-brand-500 transition">
+                        <div class="text-xs font-bold text-brand-500">🍅 Pomodoro</div>
+                        <div class="text-lg font-mono font-bold mt-1">25:00</div>
+                    </button>
+                </div>
+                <div class="preset-card">
+                    <button onclick="setPreset(60, 'default-math')" data-preset-key="default-math" class="preset-button p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-left hover:border-brand-500 transition">
+                        <div class="text-xs font-bold text-slate-400">📐 Math Grind</div>
+                        <div class="text-lg font-mono font-bold mt-1">60:00</div>
+                    </button>
+                </div>
+            `;
+            state.customPresets.forEach(preset => {
+                container.innerHTML += `
+                    <div class="preset-card">
+                        <button onclick="setPreset(${preset.mins}, 'preset-${preset.id}')" data-preset-key="preset-${preset.id}" class="preset-button p-3 rounded-xl border border-slate-200 dark:border-slate-800 text-left hover:border-brand-500 transition">
+                            <div class="text-xs font-bold text-slate-400">✨ ${preset.name}</div>
+                            <div class="text-lg font-mono font-bold mt-1">${preset.mins}:00</div>
+                        </button>
+                        <button type="button" onclick="deleteCustomPreset(${preset.id})" class="preset-delete" title="Delete session preset">
+                            <i class="fa-solid fa-trash"></i>
+                        </button>
+                    </div>
+                `;
+            });
+            highlightSelectedPreset();
+        }
+
+        // Modals Command Center
+        function openTimetableModal() { document.getElementById('modal-timetable').style.display = 'flex'; }
+        function openCustomSessionModal() { document.getElementById('modal-custom-session').style.display = 'flex'; }
+        function openAssignmentModal() { syncSubjectDropdowns(); document.getElementById('modal-assignment').style.display = 'flex'; initDatepicker('input-task-deadline'); }
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+        // Simple datepicker implementation (per-input)
+        function initDatepicker(inputId) {
+            const dp = document.getElementById(`datepicker-${inputId}`);
+            if(!dp) return;
+            const today = new Date();
+            dp.dataset.viewYear = today.getFullYear();
+            dp.dataset.viewMonth = today.getMonth();
+            renderDatepicker(inputId);
+        }
+
+        function toggleDatepicker(inputId) {
+            const dp = document.getElementById(`datepicker-${inputId}`);
+            if(!dp) return;
+            dp.classList.toggle('hidden');
+            if(!dp.classList.contains('hidden')) renderDatepicker(inputId);
+        }
+
+        function changeMonth(delta, inputId) {
+            const dp = document.getElementById(`datepicker-${inputId}`);
+            if(!dp) return;
+            let y = parseInt(dp.dataset.viewYear,10);
+            let m = parseInt(dp.dataset.viewMonth,10);
+            m += delta;
+            if(m < 0) { m = 11; y -= 1; }
+            if(m > 11) { m = 0; y += 1; }
+            dp.dataset.viewYear = y; dp.dataset.viewMonth = m;
+            renderDatepicker(inputId);
+        }
+
+        function renderDatepicker(inputId) {
+            const dp = document.getElementById(`datepicker-${inputId}`);
+            const grid = document.getElementById(`dp-grid-${inputId}`);
+            const monthLabel = document.getElementById(`dp-month-${inputId}`);
+            if(!dp || !grid || !monthLabel) return;
+            const year = parseInt(dp.dataset.viewYear,10);
+            const month = parseInt(dp.dataset.viewMonth,10);
+            const first = new Date(year, month, 1);
+            const startDay = (first.getDay() + 6) % 7; // make Monday=0 if desired; keep Sun as 6
+            const daysInMonth = new Date(year, month+1, 0).getDate();
+
+            monthLabel.innerText = first.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+            grid.innerHTML = '';
+
+            // week day headers
+            const weekNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+            weekNames.forEach(w => { const el = document.createElement('div'); el.className='text-[10px] text-slate-400'; el.style.textAlign='center'; el.innerText = w; grid.appendChild(el); });
+
+            // fill blanks
+            for(let i=0;i<startDay;i++){
+                const el = document.createElement('div'); el.className=''; el.innerHTML=''; grid.appendChild(el);
+            }
+
+            for(let d=1; d<=daysInMonth; d++){
+                const el = document.createElement('div');
+                el.className = 'dp-day';
+                el.innerText = d;
+                el.onclick = () => {
+                    const yyyy = year.toString().padStart(4,'0');
+                    const mm = (month+1).toString().padStart(2,'0');
+                    const dd = d.toString().padStart(2,'0');
+                    const input = document.getElementById(inputId);
+                    input.value = `${yyyy}-${mm}-${dd}`;
+                    // hide
+                    dp.classList.add('hidden');
+                };
+                grid.appendChild(el);
+            }
+        }
+
+        // close datepicker when clicking outside
+        document.addEventListener('click', function(e){
+            const openDp = document.querySelectorAll('.datepicker:not(.hidden)');
+            openDp.forEach(dp => {
+                if(!dp.contains(e.target) && !document.getElementById(dp.id.replace('datepicker-','')).contains(e.target)) {
+                    dp.classList.add('hidden');
+                }
+            });
+        });
+
+        // Save Operations
+        function saveTimetableClass() {
+            const name = document.getElementById('input-class-name').value.trim();
+            const time = document.getElementById('input-class-time').value.trim();
+            const level = document.getElementById('input-class-level').value;
+            const colorInput = document.getElementById('input-class-color');
+            const color = colorInput ? colorInput.value : null;
+            if(!name || !time) return;
+            state.timetable.push({ id: Date.now(), time, name, level, color });
+            renderTimetable();
+            closeModal('modal-timetable');
+            saveProfileToDisk();
+            document.getElementById('input-class-name').value = '';
+            document.getElementById('input-class-time').value = '';
+            if(colorInput) colorInput.value = '#a78bfa';
+        }
+
+        function saveCustomSession() {
+            const name = document.getElementById('input-preset-name').value.trim();
+            const mins = parseInt(document.getElementById('input-preset-time').value);
+            if(!name || !mins) return;
+            const presetId = Date.now();
+            state.customPresets.push({ id: presetId, name, mins });
+            state.activePreset = `preset-${presetId}`;
+            rebuildCustomPresetInterface();
+            closeModal('modal-custom-session');
+            saveProfileToDisk();
+            document.getElementById('input-preset-name').value = '';
+        }
+
+        function deleteCustomPreset(id) {
+            state.customPresets = state.customPresets.filter(preset => preset.id !== id);
+            if(state.activePreset === `preset-${id}`) {
+                state.activePreset = 'default-pomodoro';
+                state.targetMinutes = 25;
+                document.getElementById('display-target-time').innerText = '25m';
+            }
+            rebuildCustomPresetInterface();
+            saveProfileToDisk();
+        }
+
+        function saveAssignment() {
+            const title = document.getElementById('input-task-name').value.trim();
+            const subject = document.getElementById('input-task-subject').value;
+            const dueDate = document.getElementById('input-task-deadline').value;
+            if(!title || !subject || !dueDate) return;
+            state.assignments.push({ id: Date.now(), title, subject, dueDate });
+            renderAssignments();
+            closeModal('modal-assignment');
+            saveProfileToDisk();
+            document.getElementById('input-task-name').value = '';
+            document.getElementById('input-task-deadline').value = '';
+        }
+    </script>
+</body>
+</html>

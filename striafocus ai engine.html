@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StriaFocus — AI Study Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#0ea5a4',
+                            600: '#0891b2',
+                            700: '#0e7490',
+                            900: '#075985',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        /* ─── Scrollbar ─────────────────────────────── */
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #8b5cf6; border-radius: 4px; }
+
+        /* ─── Animations ────────────────────────────── */
+        @keyframes slideUp   { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes fadeIn    { from { opacity:0; } to { opacity:1; } }
+        @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+        @keyframes shimmer   { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+        @keyframes float     { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-6px); } }
+        @keyframes spin-slow { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+
+        .animate-slide-up  { animation: slideUp .45s cubic-bezier(.2,.9,.2,1) both; }
+        .animate-fade-in   { animation: fadeIn .3s ease both; }
+
+        /* ─── Page layout ───────────────────────────── */
+        body { min-height: 100vh; }
+        #workspace { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 64px); overflow: hidden; }
+
+        /* ─── Source panel (left) ───────────────────── */
+        #source-panel { border-right: 1px solid; overflow-y: auto; }
+        .dark #source-panel { border-color: rgba(255,255,255,.06); background: #0b0f1a; }
+        html:not(.dark) #source-panel { border-color: rgba(0,0,0,.08); background: #f8fafc; }
+
+        /* ─── Drop zone ─────────────────────────────── */
+        #drop-zone { border: 1.5px dashed; border-radius: 14px; transition: all .25s ease; cursor: pointer; }
+        .dark #drop-zone  { border-color: rgba(139,92,246,.35); }
+        html:not(.dark) #drop-zone { border-color: rgba(14,165,164,.35); }
+        #drop-zone:hover, #drop-zone.drag-over {
+            background: rgba(139,92,246,.07);
+            border-color: rgba(139,92,246,.7);
+            transform: scale(1.01);
+        }
+        #drop-zone.drag-over { box-shadow: 0 0 0 3px rgba(139,92,246,.2); }
+
+        /* ─── Source chips ──────────────────────────── */
+        .source-chip { border-radius: 12px; border: 1px solid; transition: all .2s ease; cursor: pointer; }
+        .dark .source-chip { border-color: rgba(255,255,255,.06); background: rgba(255,255,255,.03); }
+        html:not(.dark) .source-chip { border-color: rgba(0,0,0,.08); background: #fff; }
+        .source-chip:hover { border-color: rgba(139,92,246,.5); background: rgba(139,92,246,.06); }
+        .source-chip.active { border-color: rgba(139,92,246,.7) !important; background: rgba(139,92,246,.1) !important; }
+        .source-chip .remove-btn { opacity: 0; transition: opacity .15s; }
+        .source-chip:hover .remove-btn { opacity: 1; }
+
+        /* ─── Chat area (right) ─────────────────────── */
+        #chat-panel { display: flex; flex-direction: column; overflow: hidden; }
+        #chat-messages { flex: 1; overflow-y: auto; padding: 28px 32px; display: flex; flex-direction: column; gap: 20px; }
+
+        /* ─── Message bubbles ───────────────────────── */
+        .msg { max-width: 82%; animation: slideUp .35s cubic-bezier(.2,.9,.2,1) both; }
+        .msg-user { align-self: flex-end; }
+        .msg-ai   { align-self: flex-start; }
+
+        .msg-user .bubble {
+            background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+            color: #fff;
+            border-radius: 18px 18px 4px 18px;
+            padding: 12px 16px;
+            font-size: 14px;
+            line-height: 1.6;
+            box-shadow: 0 4px 20px rgba(139,92,246,.3);
+        }
+        .msg-ai .bubble {
+            border-radius: 4px 18px 18px 18px;
+            padding: 14px 18px;
+            font-size: 14px;
+            line-height: 1.7;
+        }
+        .dark .msg-ai .bubble  { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.07); color: #e2e8f0; }
+        html:not(.dark) .msg-ai .bubble { background: #fff; border: 1px solid rgba(0,0,0,.08); color: #1e293b; box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+
+        /* ─── AI thinking indicator ─────────────────── */
+        .typing-dot { width: 7px; height: 7px; border-radius: 50%; background: #8b5cf6; animation: pulse-dot 1.2s ease-in-out infinite; }
+        .typing-dot:nth-child(2) { animation-delay: .2s; }
+        .typing-dot:nth-child(3) { animation-delay: .4s; }
+
+        /* ─── AI response markdown ──────────────────── */
+        .ai-content h1, .ai-content h2, .ai-content h3 { font-weight: 700; margin: 12px 0 6px; color: inherit; }
+        .ai-content h1 { font-size: 17px; }
+        .ai-content h2 { font-size: 15px; }
+        .ai-content h3 { font-size: 14px; }
+        .ai-content p  { margin: 6px 0; }
+        .ai-content ul, .ai-content ol { padding-left: 18px; margin: 6px 0; }
+        .ai-content li { margin: 3px 0; }
+        .ai-content code { font-family: monospace; font-size: 12px; padding: 2px 5px; border-radius: 4px; background: rgba(139,92,246,.15); }
+        .ai-content pre  { background: rgba(0,0,0,.25); border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; }
+        .ai-content pre code { background: transparent; padding: 0; }
+        .ai-content strong { font-weight: 700; color: #a78bfa; }
+        .ai-content blockquote { border-left: 3px solid #8b5cf6; padding-left: 12px; opacity: .8; margin: 8px 0; }
+
+        /* ─── Input area ────────────────────────────── */
+        #input-area { border-top: 1px solid; padding: 16px 24px 20px; }
+        .dark #input-area  { border-color: rgba(255,255,255,.06); background: #0b0f1a; }
+        html:not(.dark) #input-area { border-color: rgba(0,0,0,.08); background: #f8fafc; }
+
+        #chat-input {
+            width: 100%;
+            resize: none;
+            border-radius: 14px;
+            padding: 13px 52px 13px 16px;
+            font-size: 14px;
+            line-height: 1.5;
+            max-height: 140px;
+            transition: border-color .2s, box-shadow .2s;
+            outline: none;
+        }
+        .dark #chat-input {
+            background: rgba(255,255,255,.04);
+            border: 1px solid rgba(255,255,255,.08);
+            color: #e2e8f0;
+        }
+        html:not(.dark) #chat-input {
+            background: #fff;
+            border: 1px solid rgba(0,0,0,.1);
+            color: #1e293b;
+        }
+        #chat-input:focus { border-color: rgba(139,92,246,.6); box-shadow: 0 0 0 3px rgba(139,92,246,.12); }
+        #chat-input::placeholder { color: rgba(148,163,184,.5); }
+
+        #send-btn {
+            position: absolute;
+            right: 10px;
+            bottom: 10px;
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #8b5cf6, #a78bfa);
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all .2s ease;
+            box-shadow: 0 4px 12px rgba(139,92,246,.35);
+        }
+        #send-btn:hover  { transform: scale(1.08); box-shadow: 0 6px 18px rgba(139,92,246,.45); }
+        #send-btn:active { transform: scale(.96); }
+        #send-btn:disabled { opacity: .4; transform: none; cursor: not-allowed; }
+
+        /* ─── Suggestion pills ──────────────────────── */
+        .suggestion-pill {
+            border: 1px solid;
+            border-radius: 20px;
+            padding: 6px 13px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all .2s ease;
+            white-space: nowrap;
+        }
+        .dark .suggestion-pill { border-color: rgba(139,92,246,.3); color: rgba(167,139,250,.9); background: rgba(139,92,246,.07); }
+        html:not(.dark) .suggestion-pill { border-color: rgba(14,165,164,.3); color: #0891b2; background: rgba(14,165,164,.06); }
+        .suggestion-pill:hover { background: rgba(139,92,246,.18); border-color: rgba(139,92,246,.6); transform: translateY(-1px); }
+
+        /* ─── Welcome screen ────────────────────────── */
+        #welcome-screen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; gap: 20px; }
+        .welcome-icon { width: 72px; height: 72px; border-radius: 22px; background: linear-gradient(135deg, #8b5cf6, #0ea5a4); display: flex; align-items: center; justify-content: center; font-size: 28px; color: #fff; animation: float 4s ease-in-out infinite; box-shadow: 0 16px 40px rgba(139,92,246,.3); }
+
+        /* ─── API key modal ─────────────────────────── */
+        #api-modal { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; background: rgba(2,6,23,.7); backdrop-filter: blur(8px); }
+        #api-modal.open { display: flex; animation: fadeIn .25s ease; }
+
+        /* ─── Toast ─────────────────────────────────── */
+        #toast { position: fixed; bottom: 24px; right: 24px; z-index: 99; padding: 10px 18px; border-radius: 12px; font-size: 13px; font-weight: 600; opacity: 0; transform: translateY(8px); transition: all .3s ease; pointer-events: none; }
+        #toast.show { opacity: 1; transform: translateY(0); }
+
+        /* ─── Source type icons ─────────────────────── */
+        .src-icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+        .src-pdf  { background: rgba(239,68,68,.15); color: #ef4444; }
+        .src-txt  { background: rgba(14,165,164,.15); color: #0ea5a4; }
+        .src-note { background: rgba(139,92,246,.15); color: #8b5cf6; }
+        .src-link { background: rgba(245,158,11,.15); color: #f59e0b; }
+
+        /* ─── Mode selector ─────────────────────────── */
+        .mode-btn { border-radius: 10px; padding: 7px 12px; font-size: 12px; font-weight: 600; border: 1px solid; cursor: pointer; transition: all .2s ease; display: flex; align-items: center; gap: 6px; }
+        .dark .mode-btn { border-color: rgba(255,255,255,.08); color: rgba(148,163,184,.8); background: transparent; }
+        html:not(.dark) .mode-btn { border-color: rgba(0,0,0,.1); color: #64748b; background: transparent; }
+        .mode-btn:hover { border-color: rgba(139,92,246,.5); color: #a78bfa; background: rgba(139,92,246,.08); }
+        .mode-btn.active { background: rgba(139,92,246,.15); border-color: rgba(139,92,246,.6); color: #a78bfa; }
+
+        /* ─── Shimmer skeleton ──────────────────────── */
+        .skeleton { border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,.03) 25%, rgba(255,255,255,.08) 50%, rgba(255,255,255,.03) 75%); background-size: 400px 100%; animation: shimmer 1.4s infinite; }
+
+        /* ─── Progress bar (PDF loading) ────────────── */
+        #pdf-progress { height: 2px; background: linear-gradient(90deg, #8b5cf6, #0ea5a4); border-radius: 2px; transition: width .3s ease; width: 0%; }
+
+        /* ─── Responsive ────────────────────────────── */
+        @media (max-width: 768px) {
+            #workspace { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+            #source-panel { max-height: 260px; border-right: none; border-bottom: 1px solid rgba(255,255,255,.06); }
+        }
+
+        /* ─── Inline note editor ────────────────────── */
+        #note-editor { border-radius: 12px; padding: 12px; font-size: 13px; line-height: 1.6; min-height: 80px; outline: none; border: 1px solid; resize: none; width: 100%; transition: border-color .2s; }
+        .dark #note-editor  { background: rgba(255,255,255,.03); border-color: rgba(255,255,255,.06); color: #e2e8f0; }
+        html:not(.dark) #note-editor { background: #fff; border-color: rgba(0,0,0,.08); color: #1e293b; }
+        #note-editor:focus { border-color: rgba(139,92,246,.5); }
+        #note-editor::placeholder { color: rgba(148,163,184,.5); }
+
+        /* ─── Highlight AI citations ────────────────── */
+        .citation { background: rgba(139,92,246,.12); border-bottom: 1.5px solid rgba(139,92,246,.4); cursor: help; }
+    </style>
+</head>
+
+<body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 antialiased font-sans">
+
+<!-- ════════════════════════════════════════════════ -->
+<!--  API KEY MODAL                                   -->
+<!-- ════════════════════════════════════════════════ -->
+<div id="api-modal">
+    <div class="bg-white dark:bg-slate-900 w-full max-w-md p-8 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl space-y-5 mx-4 animate-slide-up">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl flex items-center justify-center overflow-hidden">
+                    <svg width="40" height="40" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+                        <defs><linearGradient id="lg-modal" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#0ea5a4"/></linearGradient></defs>
+                        <rect width="40" height="40" rx="10" fill="url(#lg-modal)"/>
+                        <line x1="8" y1="20" x2="28" y2="20" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+                        <line x1="8" y1="14" x2="20" y2="14" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round"/>
+                        <line x1="8" y1="26" x2="24" y2="26" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="28" cy="20" r="5" fill="none" stroke="#fff" stroke-width="2"/>
+                        <line x1="31.5" y1="23.5" x2="35" y2="27" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+                    </svg>
+                </div>
+            <div>
+                <h2 class="font-black text-base tracking-tight">Connect AI Engine</h2>
+                <p class="text-xs text-slate-400">One-time setup · stored locally only</p>
+            </div>
+        </div>
+
+        <div class="space-y-1">
+            <label class="text-xs font-bold text-slate-400 uppercase tracking-wider">OpenRouter API Key</label>
+            <div class="relative">
+                <input type="password" id="api-key-input" placeholder="sk-or-v1-..." class="w-full bg-slate-50 dark:bg-slate-950 p-3 pr-11 rounded-xl border border-slate-200 dark:border-slate-800 text-sm focus:outline-none focus:border-violet-500 font-mono">
+                <button onclick="toggleApiVis()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-violet-400 transition text-sm" title="Show/hide">
+                    <i class="fa-solid fa-eye" id="api-eye"></i>
+                </button>
+            </div>
+            <p class="text-xs text-slate-400 mt-2">Get your free key at <a href="https://openrouter.ai/keys" target="_blank" class="text-brand-500 hover:underline">openrouter.ai/keys</a> → Create Key. No credit card needed.</p>
+        </div>
+
+        <div class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-xs text-amber-600 dark:text-amber-400 flex gap-2">
+            <i class="fa-solid fa-triangle-exclamation mt-0.5 flex-shrink-0"></i>
+            <span>Your key is stored only in your browser's localStorage and never sent anywhere except directly to Anthropic's API.</span>
+        </div>
+
+        <div class="flex gap-2 pt-1">
+            <button onclick="closeApiModal()" class="flex-1 py-2.5 text-sm text-slate-500 border border-slate-200 dark:border-slate-700 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+                Later (demo mode)
+            </button>
+            <button onclick="saveApiKey()" class="flex-1 py-2.5 text-sm font-bold text-white rounded-xl bg-gradient-to-r from-violet-500 to-brand-500 hover:opacity-90 transition shadow-lg shadow-violet-500/20">
+                Connect Engine
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ════════════════════════════════════════════════ -->
+<!--  HEADER                                          -->
+<!-- ════════════════════════════════════════════════ -->
+<header class="border-b border-slate-200 dark:border-slate-800 bg-white/60 dark:bg-slate-900/60 backdrop-blur sticky top-0 z-40 h-16">
+    <div class="max-w-full px-5 h-full flex items-center justify-between gap-4">
+
+        <!-- Logo + back link -->
+        <div class="flex items-center gap-3">
+            <a href="striafocus.html" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition text-sm flex items-center gap-1.5" title="Back to dashboard">
+                <i class="fa-solid fa-arrow-left text-xs"></i>
+                <span class="hidden sm:inline text-xs font-medium">Dashboard</span>
+            </a>
+            <div class="w-px h-5 bg-slate-200 dark:bg-slate-700"></div>
+            <div class="flex items-center gap-2.5">
+                <svg width="28" height="28" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                    <defs><linearGradient id="lg-nav" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#0ea5a4"/></linearGradient></defs>
+                    <rect width="32" height="32" rx="8" fill="url(#lg-nav)"/>
+                    <line x1="6" y1="16" x2="23" y2="16" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+                    <line x1="6" y1="11" x2="16" y2="11" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round"/>
+                    <line x1="6" y1="21" x2="19" y2="21" stroke="rgba(255,255,255,0.5)" stroke-width="1.5" stroke-linecap="round"/>
+                    <circle cx="23" cy="16" r="4" fill="none" stroke="#fff" stroke-width="1.8"/>
+                    <line x1="25.8" y1="18.8" x2="28.5" y2="21.5" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <div>
+                    <span class="font-black text-sm tracking-tight bg-gradient-to-r from-brand-500 to-violet-400 bg-clip-text text-transparent">AI Study Engine</span>
+                    <span class="text-xs text-slate-400 ml-1.5 hidden sm:inline">by StriaFocus</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mode selector -->
+        <div class="flex items-center gap-1.5" id="mode-bar">
+            <button class="mode-btn active" data-mode="qa" onclick="setMode('qa')">
+                <i class="fa-solid fa-comments text-[11px]"></i> Q&A
+            </button>
+            <button class="mode-btn" data-mode="teach" onclick="setMode('teach')" title="Coming Phase 2">
+                <i class="fa-solid fa-chalkboard-user text-[11px]"></i> Teach
+                <span class="text-[9px] text-amber-400 font-bold ml-0.5">SOON</span>
+            </button>
+            <button class="mode-btn" data-mode="quiz" onclick="setMode('quiz')" title="Coming Phase 3">
+                <i class="fa-solid fa-bolt text-[11px]"></i> Quiz
+                <span class="text-[9px] text-amber-400 font-bold ml-0.5">SOON</span>
+            </button>
+            <button class="mode-btn" data-mode="map" onclick="setMode('map')" title="Coming Phase 4">
+                <i class="fa-solid fa-diagram-project text-[11px]"></i> Mind Map
+                <span class="text-[9px] text-amber-400 font-bold ml-0.5">SOON</span>
+            </button>
+        </div>
+
+        <!-- Right controls -->
+        <div class="flex items-center gap-2">
+            <div id="api-status-dot" class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full cursor-pointer" onclick="openApiModal()" title="Configure API key">
+                <div class="w-2 h-2 rounded-full bg-red-400" id="status-dot"></div>
+                <span id="status-label" class="hidden sm:inline text-slate-400">No API key</span>
+            </div>
+            <button onclick="toggleTheme()" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:scale-105 active:scale-95 transition text-sm text-slate-500 dark:text-slate-400">
+                <i id="theme-icon" class="fa-solid fa-moon"></i>
+            </button>
+            <button onclick="clearChat()" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:scale-105 active:scale-95 transition text-sm text-slate-500 dark:text-slate-400" title="Clear chat">
+                <i class="fa-solid fa-broom"></i>
+            </button>
+        </div>
+
+    </div>
+</header>
+
+<!-- ════════════════════════════════════════════════ -->
+<!--  MAIN WORKSPACE                                  -->
+<!-- ════════════════════════════════════════════════ -->
+<div id="workspace">
+
+    <!-- ── LEFT: Source Panel ── -->
+    <div id="source-panel" class="flex flex-col">
+        <div class="p-4 space-y-4">
+
+            <!-- Panel header -->
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-sm font-bold text-slate-700 dark:text-slate-200">Study Sources</h2>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Upload material for AI to learn from</p>
+                </div>
+                <div id="source-count" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 hidden">
+                    0 sources
+                </div>
+            </div>
+
+            <!-- PDF load progress bar (hidden by default) -->
+            <div id="progress-track" class="h-0.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden hidden">
+                <div id="pdf-progress"></div>
+            </div>
+
+            <!-- Drop zone -->
+            <div id="drop-zone"
+                 onclick="document.getElementById('file-input').click()"
+                 ondragover="handleDragOver(event)"
+                 ondragleave="handleDragLeave(event)"
+                 ondrop="handleDrop(event)"
+                 class="p-5 text-center space-y-2.5">
+                <div class="mx-auto w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center">
+                    <i class="fa-solid fa-cloud-arrow-up text-violet-400 text-lg"></i>
+                </div>
+                <div>
+                    <p class="text-xs font-bold text-slate-600 dark:text-slate-300">Drop files here</p>
+                    <p class="text-[11px] text-slate-400 mt-0.5">PDF, TXT, or paste a link below</p>
+                </div>
+                <div class="flex items-center justify-center gap-2 flex-wrap">
+                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 font-bold">PDF</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-500 font-bold">TXT</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 font-bold">URL</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-400 font-bold">Notes</span>
+                </div>
+            </div>
+            <input type="file" id="file-input" accept=".pdf,.txt,.md" multiple class="hidden" onchange="handleFileSelect(event)">
+
+            <!-- URL input -->
+            <div class="flex gap-1.5">
+                <input type="url" id="url-input" placeholder="Paste YouTube or article URL…"
+                       class="flex-1 text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:outline-none focus:border-violet-500 transition placeholder:text-slate-400 dark:placeholder:text-slate-600"
+                       onkeydown="if(event.key==='Enter') addUrl()">
+                <button onclick="addUrl()" class="px-3 py-2 rounded-xl bg-violet-500/15 text-violet-400 text-xs font-bold hover:bg-violet-500/25 transition border border-violet-500/20">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
+            </div>
+
+            <!-- Note input toggle -->
+            <div id="note-section" class="space-y-1.5">
+                <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Quick Note</span>
+                    <button onclick="toggleNoteEditor()" class="text-[11px] text-violet-400 hover:underline" id="note-toggle-btn">Add note</button>
+                </div>
+                <div id="note-editor-wrap" class="hidden space-y-1.5">
+                    <textarea id="note-editor" placeholder="Type or paste your notes here…"></textarea>
+                    <div class="flex justify-end gap-1.5">
+                        <button onclick="toggleNoteEditor()" class="text-xs text-slate-400 hover:text-slate-600 px-2 py-1">Cancel</button>
+                        <button onclick="saveNote()" class="text-xs font-bold px-3 py-1.5 rounded-lg bg-violet-500/15 text-violet-400 hover:bg-violet-500/25 transition">
+                            Save to sources
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Source list header -->
+            <div id="sources-header" class="hidden pt-1">
+                <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Loaded sources</span>
+                    <button onclick="clearSources()" class="text-[11px] text-red-400 hover:underline">Clear all</button>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Source list -->
+        <div id="sources-list" class="px-4 pb-4 space-y-2 flex-1 overflow-y-auto"></div>
+
+        <!-- Context meter -->
+        <div id="context-meter" class="px-4 pb-4 hidden">
+            <div class="rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2">
+                <div class="flex justify-between items-center">
+                    <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Context usage</span>
+                    <span class="text-[11px] font-mono text-violet-400" id="token-count">~0 tokens</span>
+                </div>
+                <div class="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                    <div id="context-bar" class="h-full rounded-full bg-gradient-to-r from-violet-500 to-brand-500 transition-all duration-500" style="width:0%"></div>
+                </div>
+                <p class="text-[10px] text-slate-400">OpenRouter free model context: ~128k tokens</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── RIGHT: Chat Panel ── -->
+    <div id="chat-panel">
+
+        <!-- Welcome / empty state -->
+        <div id="welcome-screen">
+            <div class="welcome-icon">
+                <i class="fa-solid fa-brain"></i>
+            </div>
+            <div class="text-center space-y-2 max-w-sm">
+                <h2 class="text-xl font-black tracking-tight bg-gradient-to-r from-violet-400 to-brand-500 bg-clip-text text-transparent">
+                    Your AI Study Engine
+                </h2>
+                <p class="text-sm text-slate-400 leading-relaxed">
+                    Upload your notes, PDFs, or paste a link on the left. Then ask anything — I'll teach it back to you.
+                </p>
+            </div>
+
+            <!-- Suggestion chips for empty state -->
+            <div class="flex flex-wrap gap-2 justify-center max-w-md mt-2">
+                <button class="suggestion-pill" onclick="useSuggestion(this)">Summarize the key concepts</button>
+                <button class="suggestion-pill" onclick="useSuggestion(this)">What are the most important points?</button>
+                <button class="suggestion-pill" onclick="useSuggestion(this)">Explain this like I'm 15</button>
+                <button class="suggestion-pill" onclick="useSuggestion(this)">Create a study outline</button>
+                <button class="suggestion-pill" onclick="useSuggestion(this)">What might appear on an exam?</button>
+                <button class="suggestion-pill" onclick="useSuggestion(this)">Generate 5 practice questions</button>
+            </div>
+
+            <p class="text-[11px] text-slate-500 mt-4">
+                <i class="fa-solid fa-lock-keyhole text-xs mr-1"></i>
+                Add sources on the left to get started
+            </p>
+        </div>
+
+        <!-- Chat messages (hidden until first message) -->
+        <div id="chat-messages" class="hidden"></div>
+
+        <!-- Input area -->
+        <div id="input-area">
+            <!-- Suggestion pills (shown after sources are added) -->
+            <div id="quick-suggestions" class="flex gap-2 mb-3 overflow-x-auto pb-1 hidden">
+                <button class="suggestion-pill flex-shrink-0" onclick="useSuggestion(this)">Summarize</button>
+                <button class="suggestion-pill flex-shrink-0" onclick="useSuggestion(this)">Key concepts</button>
+                <button class="suggestion-pill flex-shrink-0" onclick="useSuggestion(this)">Practice questions</button>
+                <button class="suggestion-pill flex-shrink-0" onclick="useSuggestion(this)">Explain simply</button>
+                <button class="suggestion-pill flex-shrink-0" onclick="useSuggestion(this)">Study outline</button>
+            </div>
+
+            <!-- Text input row -->
+            <div class="relative">
+                <textarea id="chat-input"
+                    placeholder="Ask anything about your uploaded material…"
+                    rows="1"
+                    onkeydown="handleInputKey(event)"
+                    oninput="autoResize(this)"></textarea>
+                <button id="send-btn" onclick="sendMessage()" title="Send (Enter)">
+                    <i class="fa-solid fa-paper-plane text-white text-xs"></i>
+                </button>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-2 text-center">
+                AI reads your uploaded sources · <span class="text-violet-400 cursor-pointer hover:underline" onclick="openApiModal()">Add OpenRouter key</span>
+            </p>
+        </div>
+
+    </div>
+</div>
+
+<!-- Toast notification -->
+<div id="toast"></div>
+
+
+<!-- ════════════════════════════════════════════════ -->
+<!--  SCRIPT                                          -->
+<!-- ════════════════════════════════════════════════ -->
+<script>
+/* ═══════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════ */
+const state = {
+    sources: [],          // { id, name, type, content, active, tokens }
+    messages: [],         // { role, content }
+    apiKey: '',
+    isLoading: false,
+    mode: 'qa',
+    totalTokens: 0,
+};
+
+/* ═══════════════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', () => {
+    // Load API key from localStorage
+    const saved = localStorage.getItem('sf_api_key');
+    if (saved) {
+        state.apiKey = saved;
+        updateApiStatus(true);
+    } else {
+        // Show modal after short delay on first visit
+        setTimeout(openApiModal, 800);
+    }
+
+// Theme sync with parent StriaFocus
+    const theme = localStorage.getItem('sf_theme') || 'dark';
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.getElementById('theme-icon').className = theme === 'dark'
+        ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
+
+    // Receive theme sync handshakes from parent window
+    window.addEventListener('message', (event) => {
+        if (!event || !event.data || event.data.type !== 'SYNC_STRIA_THEME') return;
+        const themeToApply = event.data.theme;
+        if (themeToApply !== 'dark' && themeToApply !== 'light') return;
+
+        document.documentElement.classList.toggle('dark', themeToApply === 'dark');
+        localStorage.setItem('sf_theme', themeToApply);
+        const themeIcon = document.getElementById('theme-icon');
+        if (themeIcon) {
+            themeIcon.className = themeToApply === 'dark'
+                ? 'fa-solid fa-moon'
+                : 'fa-solid fa-sun';
+        }
+    });
+});
+
+
+/* ═══════════════════════════════════════════════════
+   API KEY MODAL
+═══════════════════════════════════════════════════ */
+function openApiModal() {
+    document.getElementById('api-modal').classList.add('open');
+    const inp = document.getElementById('api-key-input');
+    if (state.apiKey) inp.value = state.apiKey;
+    setTimeout(() => inp.focus(), 100);
+}
+function closeApiModal() {
+    document.getElementById('api-modal').classList.remove('open');
+}
+function toggleApiVis() {
+    const inp = document.getElementById('api-key-input');
+    const eye = document.getElementById('api-eye');
+    const isPass = inp.type === 'password';
+    inp.type = isPass ? 'text' : 'password';
+    eye.className = isPass ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+}
+function saveApiKey() {
+    const key = document.getElementById('api-key-input').value.trim();
+    if (key.length < 10) {
+        showToast('Paste your full OpenRouter key (sk-or-v1-...)', 'error');
+        return;
+    }
+    state.apiKey = key;
+    localStorage.setItem('sf_api_key', key);
+    updateApiStatus(true);
+    closeApiModal();
+    showToast('AI Engine connected!', 'success');
+}
+function updateApiStatus(connected) {
+    const dot = document.getElementById('status-dot');
+    const label = document.getElementById('status-label');
+    if (connected) {
+        dot.className = 'w-2 h-2 rounded-full bg-green-400';
+        label.textContent = 'AI ready';
+        label.className = 'hidden sm:inline text-green-400';
+    } else {
+        dot.className = 'w-2 h-2 rounded-full bg-red-400';
+        label.textContent = 'No API key';
+        label.className = 'hidden sm:inline text-slate-400';
+    }
+}
+
+/* ═══════════════════════════════════════════════════
+   FILE HANDLING
+═══════════════════════════════════════════════════ */
+function handleDragOver(e) {
+    e.preventDefault();
+    document.getElementById('drop-zone').classList.add('drag-over');
+}
+function handleDragLeave() {
+    document.getElementById('drop-zone').classList.remove('drag-over');
+}
+function handleDrop(e) {
+    e.preventDefault();
+    document.getElementById('drop-zone').classList.remove('drag-over');
+    const files = Array.from(e.dataTransfer.files);
+    files.forEach(processFile);
+}
+function handleFileSelect(e) {
+    Array.from(e.target.files).forEach(processFile);
+    e.target.value = '';
+}
+
+async function processFile(file) {
+    const maxMB = 25;
+    if (file.size > maxMB * 1024 * 1024) {
+        showToast(`${file.name} is too large (max ${maxMB}MB)`, 'error');
+        return;
+    }
+
+    const id = Date.now() + Math.random();
+    const ext = file.name.split('.').pop().toLowerCase();
+
+    if (ext === 'pdf') {
+        await processPDF(file, id);
+    } else if (['txt', 'md'].includes(ext)) {
+        const text = await file.text();
+        addSource({ id, name: file.name, type: 'txt', content: text });
+    } else {
+        showToast('Unsupported format. Use PDF or TXT.', 'error');
+    }
+}
+
+async function processPDF(file, id) {
+    showProgressBar(true);
+
+    try {
+        // Load pdf.js from CDN
+        if (!window.pdfjsLib) {
+            await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+                'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = '';
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            fullText += content.items.map(s => s.str).join(' ') + '\n\n';
+            // Update progress
+            const pct = Math.round((i / pdf.numPages) * 100);
+            document.getElementById('pdf-progress').style.width = pct + '%';
+        }
+
+        addSource({ id, name: file.name, type: 'pdf', content: fullText.trim() });
+    } catch (err) {
+        console.error(err);
+        showToast('Failed to read PDF. Try a different file.', 'error');
+    } finally {
+        showProgressBar(false);
+    }
+}
+
+function loadScript(src) {
+    return new Promise((resolve, reject) => {
+        if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+    });
+}
+
+function showProgressBar(show) {
+    const track = document.getElementById('progress-track');
+    track.classList.toggle('hidden', !show);
+    if (!show) document.getElementById('pdf-progress').style.width = '0%';
+}
+
+/* ═══════════════════════════════════════════════════
+   URL / NOTE SOURCES
+═══════════════════════════════════════════════════ */
+async function addUrl() {
+    const input = document.getElementById('url-input');
+    const url = input.value.trim();
+    if (!url) return;
+
+    // Basic URL check
+    try { new URL(url); } catch { showToast('Enter a valid URL', 'error'); return; }
+
+    // For YouTube, extract video ID and note it
+    const ytMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+    if (ytMatch) {
+        const videoId = ytMatch[1];
+        const content = `[YouTube Video]\nURL: ${url}\nVideo ID: ${videoId}\n\nNote: For full transcript extraction, the YouTube transcript API integration is coming in Phase 5. For now, you can manually paste the transcript or key notes from this video.`;
+        addSource({ id: Date.now(), name: `YouTube: ${videoId}`, type: 'link', content });
+        input.value = '';
+        return;
+    }
+
+    // Generic URL — store as reference
+    const content = `[Web Article]\nURL: ${url}\n\nNote: Full article extraction is coming in Phase 5. For now, paste the article text as a note instead.`;
+    addSource({ id: Date.now(), name: url.replace(/^https?:\/\//, '').substring(0, 45), type: 'link', content });
+    input.value = '';
+}
+
+function toggleNoteEditor() {
+    const wrap = document.getElementById('note-editor-wrap');
+    const btn = document.getElementById('note-toggle-btn');
+    const hidden = wrap.classList.toggle('hidden');
+    btn.textContent = hidden ? 'Add note' : 'Cancel';
+    if (!hidden) document.getElementById('note-editor').focus();
+}
+
+function saveNote() {
+    const text = document.getElementById('note-editor').value.trim();
+    if (!text) return;
+    addSource({ id: Date.now(), name: 'My notes · ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}), type: 'note', content: text });
+    document.getElementById('note-editor').value = '';
+    toggleNoteEditor();
+}
+
+/* ═══════════════════════════════════════════════════
+   SOURCE MANAGEMENT
+═══════════════════════════════════════════════════ */
+function addSource(source) {
+    source.active = true;
+    source.tokens = estimateTokens(source.content);
+    state.sources.push(source);
+    renderSources();
+    updateContextMeter();
+    showQuickSuggestions();
+    showToast(`"${source.name.substring(0, 30)}" added`, 'success');
+}
+
+function removeSource(id) {
+    state.sources = state.sources.filter(s => s.id !== id);
+    renderSources();
+    updateContextMeter();
+    if (state.sources.length === 0) {
+        document.getElementById('sources-header').classList.add('hidden');
+        document.getElementById('source-count').classList.add('hidden');
+        document.getElementById('quick-suggestions').classList.add('hidden');
+    }
+}
+
+function toggleSource(id) {
+    const s = state.sources.find(s => s.id === id);
+    if (s) { s.active = !s.active; renderSources(); updateContextMeter(); }
+}
+
+function clearSources() {
+    if (!confirm('Remove all sources?')) return;
+    state.sources = [];
+    renderSources();
+    updateContextMeter();
+    document.getElementById('sources-header').classList.add('hidden');
+    document.getElementById('source-count').classList.add('hidden');
+    document.getElementById('quick-suggestions').classList.add('hidden');
+    document.getElementById('context-meter').classList.add('hidden');
+}
+
+function renderSources() {
+    const list = document.getElementById('sources-list');
+    const header = document.getElementById('sources-header');
+    const countBadge = document.getElementById('source-count');
+
+    if (state.sources.length === 0) {
+        list.innerHTML = '';
+        header.classList.add('hidden');
+        countBadge.classList.add('hidden');
+        return;
+    }
+
+    header.classList.remove('hidden');
+    countBadge.classList.remove('hidden');
+    countBadge.textContent = `${state.sources.length} source${state.sources.length > 1 ? 's' : ''}`;
+
+    const icons = { pdf: 'src-pdf fa-file-pdf', txt: 'src-txt fa-file-lines', note: 'src-note fa-pen-to-square', link: 'src-link fa-link' };
+
+    list.innerHTML = state.sources.map(s => `
+        <div class="source-chip p-2.5 flex items-center gap-2.5 group ${s.active ? 'active' : ''}" onclick="toggleSource(${s.id})">
+            <div class="src-icon ${icons[s.type].split(' ')[0]}">
+                <i class="fa-solid ${icons[s.type].split(' ')[1]} text-xs"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+                <p class="text-xs font-semibold text-slate-700 dark:text-slate-200 truncate">${escHtml(s.name)}</p>
+                <p class="text-[10px] text-slate-400 mt-0.5">~${formatNum(s.tokens)} tokens · ${s.active ? 'active' : 'paused'}</p>
+            </div>
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+                <div class="w-1.5 h-1.5 rounded-full ${s.active ? 'bg-green-400' : 'bg-slate-500'}"></div>
+                <button class="remove-btn text-slate-400 hover:text-red-400 transition text-xs p-1" onclick="event.stopPropagation(); removeSource(${s.id})" title="Remove">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function updateContextMeter() {
+    const meter = document.getElementById('context-meter');
+    const active = state.sources.filter(s => s.active);
+    if (active.length === 0) { meter.classList.add('hidden'); return; }
+
+    meter.classList.remove('hidden');
+    const total = active.reduce((sum, s) => sum + s.tokens, 0);
+    const maxTokens = 200000;
+    const pct = Math.min((total / maxTokens) * 100, 100);
+
+    document.getElementById('token-count').textContent = `~${formatNum(total)} tokens`;
+    document.getElementById('context-bar').style.width = pct + '%';
+
+    // Color feedback
+    const bar = document.getElementById('context-bar');
+    if (pct > 80) bar.className = bar.className.replace('from-violet-500 to-brand-500', 'from-red-500 to-amber-500');
+    else bar.className = bar.className.replace('from-red-500 to-amber-500', 'from-violet-500 to-brand-500');
+}
+
+function showQuickSuggestions() {
+    if (state.sources.some(s => s.active)) {
+        document.getElementById('quick-suggestions').classList.remove('hidden');
+    }
+}
+
+/* ═══════════════════════════════════════════════════
+   CHAT SYSTEM
+═══════════════════════════════════════════════════ */
+function handleInputKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+}
+
+function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+}
+
+function useSuggestion(btn) {
+    const inp = document.getElementById('chat-input');
+    inp.value = btn.textContent.trim();
+    autoResize(inp);
+    inp.focus();
+    sendMessage();
+}
+
+async function sendMessage() {
+    const inp = document.getElementById('chat-input');
+    const text = inp.value.trim();
+    if (!text || state.isLoading) return;
+
+    // Check for sources
+    const activeSources = state.sources.filter(s => s.active);
+    if (activeSources.length === 0) {
+        showToast('Add at least one source first!', 'error');
+        return;
+    }
+
+    // Hide welcome, show chat
+    document.getElementById('welcome-screen').classList.add('hidden');
+    const chatMessages = document.getElementById('chat-messages');
+    chatMessages.classList.remove('hidden');
+
+    // Add user message
+    inp.value = '';
+    inp.style.height = 'auto';
+    state.messages.push({ role: 'user', content: text });
+    appendMessage('user', text);
+
+    // Show typing indicator
+    const typingId = showTyping();
+    state.isLoading = true;
+    document.getElementById('send-btn').disabled = true;
+
+    try {
+        const response = await callClaudeAPI(text, activeSources);
+        removeTyping(typingId);
+        state.messages.push({ role: 'assistant', content: response });
+        appendMessage('ai', response);
+    } catch (err) {
+        removeTyping(typingId);
+        const errMsg = handleAPIError(err);
+        appendMessage('ai', errMsg, true);
+    } finally {
+        state.isLoading = false;
+        document.getElementById('send-btn').disabled = false;
+        scrollToBottom();
+    }
+}
+
+function appendMessage(role, content, isError = false) {
+    const chat = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.className = `msg msg-${role === 'user' ? 'user' : 'ai'}`;
+
+    const animDelay = `animation-delay: ${0}ms`;
+
+    if (role === 'user') {
+        div.innerHTML = `<div class="bubble">${escHtml(content)}</div>`;
+    } else {
+        const parsed = parseMarkdown(content);
+        div.innerHTML = `
+            <div class="flex items-start gap-2.5">
+                <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-brand-500 flex items-center justify-center flex-shrink-0 mt-0.5 shadow-md shadow-violet-500/20">
+                    <i class="fa-solid fa-brain text-white text-[10px]"></i>
+                </div>
+                <div class="bubble ai-content flex-1 ${isError ? 'border-red-500/30' : ''}">${parsed}</div>
+            </div>
+        `;
+    }
+
+    chat.appendChild(div);
+    scrollToBottom();
+}
+
+function showTyping() {
+    const chat = document.getElementById('chat-messages');
+    const id = 'typing-' + Date.now();
+    const div = document.createElement('div');
+    div.id = id;
+    div.className = 'msg msg-ai';
+    div.innerHTML = `
+        <div class="flex items-start gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-brand-500 flex items-center justify-center flex-shrink-0 shadow-md shadow-violet-500/20">
+                <i class="fa-solid fa-brain text-white text-[10px]"></i>
+            </div>
+            <div class="bubble flex items-center gap-1.5 py-3 px-4">
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+                <div class="typing-dot"></div>
+            </div>
+        </div>
+    `;
+    chat.appendChild(div);
+    scrollToBottom();
+    return id;
+}
+
+function removeTyping(id) {
+    document.getElementById(id)?.remove();
+}
+
+function scrollToBottom() {
+    const chat = document.getElementById('chat-messages');
+    chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+}
+
+function clearChat() {
+    state.messages = [];
+    const chat = document.getElementById('chat-messages');
+    chat.innerHTML = '';
+    chat.classList.add('hidden');
+    document.getElementById('welcome-screen').classList.remove('hidden');
+    showToast('Chat cleared', 'info');
+}
+
+/* ═══════════════════════════════════════════════════
+   OPENROUTER API CALL
+═══════════════════════════════════════════════════ */
+async function callClaudeAPI(userMessage, sources) {
+    if (!state.apiKey) {
+        return demoResponse(userMessage, sources);
+    }
+
+    const sourceContext = sources.map((s, i) => `
+--- SOURCE ${i + 1}: ${s.name} (${s.type.toUpperCase()}) ---
+${s.content.substring(0, 30000)}
+--- END SOURCE ${i + 1} ---`).join('\n\n');
+
+    const systemPrompt = `You are an expert AI study tutor embedded in StriaFocus, a student productivity platform.
+
+Your job is to help students deeply understand their study material. You have been given the following study sources:
+
+${sourceContext}
+
+INSTRUCTIONS:
+- Answer questions using ONLY the provided source material
+- If information is not in the sources, say so clearly
+- Use clear, student-friendly explanations
+- Use **bold** for key terms, bullet points for lists
+- When relevant, cite which source the info comes from
+- Be encouraging and pedagogically sound
+- Keep responses focused and not too long unless detail is needed
+- If asked to summarize, create clear structured summaries
+- If asked for practice questions, make them genuinely useful for exam prep`;
+
+    // Build message history (OpenRouter uses standard OpenAI format)
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        ...state.messages.slice(-10).map(m => ({
+            role: m.role === 'assistant' ? 'assistant' : 'user',
+            content: m.content
+        })),
+        { role: 'user', content: userMessage }
+    ];
+
+    // Updated June 2026 — verified live on openrouter.ai/collections/free-models
+    const FREE_MODELS = [
+        'google/gemma-4-31b-it:free',
+        'nvidia/nemotron-3-super-120b-a12b:free',
+        'meta-llama/llama-3.3-70b-instruct:free',
+        'openrouter/free'
+    ];
+
+    const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.apiKey}`,
+        'HTTP-Referer': window.location.href,
+        'X-Title': 'StriaFocus AI Study Engine'
+    };
+
+    let lastErr = null;
+    for (const model of FREE_MODELS) {
+        let response;
+        try {
+            response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ model, messages, max_tokens: 2048, temperature: 0.7 })
+            });
+        } catch (networkErr) {
+            throw { status: 0, message: 'Network error — check your internet connection.' };
+        }
+
+        if (response.ok) {
+            const data = await response.json();
+            return data.choices?.[0]?.message?.content || 'No response received.';
+        }
+
+        // 429 = rate limited, try next model
+        // 404 = model unavailable, try next model
+        // anything else = real error, stop
+        const errData = await response.json().catch(() => ({}));
+        lastErr = { status: response.status, message: errData.error?.message || 'API error' };
+        if (response.status !== 429 && response.status !== 404) break;
+    }
+
+    throw lastErr || { status: 0, message: 'All free models are unavailable. Try again in a moment.' };
+}
+
+function demoResponse(userMessage, sources) {
+    return new Promise(resolve => {
+        setTimeout(() => {
+            resolve(`**[Demo Mode — No API Key]**\n\nI can see you've uploaded **${sources.length} source${sources.length > 1 ? 's' : ''}**: ${sources.map(s => `"${s.name}"`).join(', ')}.\n\nTo get real AI answers about your material:\n1. Click the red dot in the top-right corner\n2. Enter your OpenRouter API key\n3. Get your free key at [openrouter.ai/keys](https://openrouter.ai/keys) → Create Key\n\nOnce connected, I'll analyze your notes and answer anything about them!`);
+        }, 1200);
+    });
+}
+
+function handleAPIError(err) {
+    console.error('API Error:', err);
+    if (err.status === 0)   return '**Could not reach OpenRouter** — try refreshing the page, then paste your key again via the status dot.';
+    if (err.status === 400) return '**Bad request** — ' + (err.message || 'something went wrong with the request format.');
+    if (err.status === 401) return '**Invalid API key** — click the status dot (top-right) and re-paste your full key from aistudio.google.com.';
+    if (err.status === 403) return '**API key rejected** — make sure the Gemini API is enabled for your key. Visit [aistudio.google.com](https://aistudio.google.com) and click \'Get API key\' to generate a fresh one.';
+    if (err.status === 429) return '**Rate limited** — free tier limit hit. Wait 60 seconds and try again.';
+    if (err.status >= 500)  return '**Gemini is down** — Google\'s servers are having issues. Try again in a minute.';
+    return `**Something went wrong** (${err.status || 'network'}) — ${err.message || 'Please try again.'}`;
+}
+
+/* ═══════════════════════════════════════════════════
+   MARKDOWN PARSER (lightweight)
+═══════════════════════════════════════════════════ */
+function parseMarkdown(text) {
+    return text
+        // Escape HTML first
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        // Code blocks
+        .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+        // Inline code
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // Headers
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        // Bold
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        // Italic
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // Unordered lists
+        .replace(/^\- (.+)$/gm, '<li>$1</li>')
+        .replace(/(<li>.*<\/li>)\n(<li>)/g, '$1$2')
+        .replace(/(<li>[\s\S]+?<\/li>)/g, '<ul>$1</ul>')
+        // Numbered lists
+        .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+        // Blockquotes
+        .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+        // Line breaks / paragraphs
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>')
+        // Wrap in paragraph
+        .replace(/^(?!<[hupblo])/gm, '')
+        .trim();
+}
+
+/* ═══════════════════════════════════════════════════
+   MODE SWITCHER
+═══════════════════════════════════════════════════ */
+function setMode(mode) {
+    state.mode = mode;
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+
+    if (mode !== 'qa') {
+        showToast(`${mode.charAt(0).toUpperCase() + mode.slice(1)} mode coming in Phase ${mode === 'teach' ? '2' : mode === 'quiz' ? '3' : '4'}! 🚀`, 'info');
+        setMode('qa'); // snap back
+    }
+}
+
+/* ═══════════════════════════════════════════════════
+   THEME
+═══════════════════════════════════════════════════ */
+function toggleTheme() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('sf_theme', isDark ? 'dark' : 'light');
+    document.getElementById('theme-icon').className = isDark
+        ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
+}
+
+/* ═══════════════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════════════ */
+function estimateTokens(text) {
+    // ~4 chars per token (rough estimate)
+    return Math.round(text.length / 4);
+}
+
+function formatNum(n) {
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return n.toString();
+}
+
+function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+let toastTimer;
+function showToast(msg, type = 'info') {
+    const t = document.getElementById('toast');
+    const colors = {
+        success: 'bg-green-500 text-white',
+        error:   'bg-red-500 text-white',
+        info:    'bg-slate-800 text-slate-100 dark:bg-slate-700'
+    };
+    t.className = `${colors[type] || colors.info} fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl text-sm font-semibold shadow-xl transition-all duration-300`;
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+</script>
+
+</body>
+</html>
