@@ -19,7 +19,7 @@ Key features added
 - Local auth warning: explicit notice in the auth card that passwords are stored in plain text in localStorage.
 
 Usage
-1. Open [zengrid1.html](zengrid1.html) in a browser (double-click or serve via simple HTTP).
+1. StriaFocus in a browser (double-click or serve via simple HTTP).
 2. Create a local profile from the auth panel (demo only). Credentials are stored in localStorage under `stria_focus_auth_db`.
 3. Add classes via "Add Class" (you can select day). Add assignments via "File Assignment" and set due date/priority.
 4. Complete an assignment by pressing the check button — you'll earn XP and the item will strike through.
@@ -31,8 +31,6 @@ Testing & Notes
 - This is a prototype: do not store real passwords or sensitive info here.
 - To inspect saved state, open DevTools → Application → Local Storage, look for `stria_focus_auth_db`.
 
-Files changed
-- [zengrid1.html](zengrid1.html)
 
 Next steps
 Next steps
